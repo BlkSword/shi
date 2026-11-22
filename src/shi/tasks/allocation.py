@@ -107,14 +107,49 @@ class AllocationTask:
                 if cur < self.demand:
                     self.world.deposit(x, y, f"task_{k}", self.regen)
 
-    def work_at(self, x: float, y: float, k: int, amount: float = 1.0) -> float:
-        """在 (x, y) 处对类型 k 做工作。返回实际完成量。"""
+    def work_at(
+        self,
+        x: float,
+        y: float,
+        k: int,
+        amount: float = 1.0,
+        radius: int = 1,
+    ) -> float:
+        """在 (x, y) 附近对类型 k 做工作。返回实际完成量。
+
+        为什么用邻域而不是单格
+        ----------------------
+        个体沿梯度移动，最终停在梯度为零处——那通常不是任务点正中心，
+        而是差半格到一格。如果只判定单格，个体站在任务点旁边却做不了工作，
+        会出现「活跃数很高但工作量是 0」的荒谬情况。
+
+        用半径 1 的邻域判定，符合「站在任务点附近就能干活」的直觉。
+        """
         ch = f"task_{k}"
-        available = self.world.read(x, y, ch)
-        if available <= 0:
+        ci = self.world.channel_index(ch)
+
+        # 找邻域内浓度最高的格子
+        cy, cx = self.world._cell(x, y)
+        y0 = max(0, cy - radius)
+        y1 = min(self.world.height, cy + radius + 1)
+        x0 = max(0, cx - radius)
+        x1 = min(self.world.width, cx + radius + 1)
+        block = self.world.data[ci, y0:y1, x0:x1]
+
+        if block.size == 0 or block.max() <= 0:
             return 0.0
+
+        # 定位到浓度最高的格子
+        local_idx = int(np.argmax(block))
+        ly, lx = np.unravel_index(local_idx, block.shape)
+        gy, gx = y0 + ly, x0 + lx
+
+        available = float(self.world.data[ci, gy, gx])
         done = min(amount, available)
-        self.world.deposit(x, y, ch, -done)
+        if done <= 0:
+            return 0.0
+
+        self.world.data[ci, gy, gx] -= done
         self.work_done += done
         self.work_by_type[k] += done
         return done
@@ -144,8 +179,9 @@ def make_allocation_stepper(
     task: AllocationTask,
     speed: float = 0.6,
     noise: float = 0.2,
-    sense_radius: int = 2,
+    sense_radius: int = 3,
     work_amount: float = 1.0,
+    search_speed: float = 1.2,
 ):
     """构造多任务分配的个体行为更新函数。
 
@@ -183,11 +219,23 @@ def make_allocation_stepper(
         active = best_p > 0.5
 
         # ---- 3. 移动 ----
+        # 关键设计：无刺激时不能原地随机游走。
+        # 任务点间距约 10 格，感知半径只有 2 格，原地游走永远找不到任务点。
+        # 必须做「定向搜索」：保持一个持续的方向，走一段再换向。
+        # 这是 Lévy flight 的简化版，也是真实觅食行为的常见模式。
         for i in range(n):
             if not active[i]:
-                agents.vx[i] = noise * (rng.random() - 0.5) * 2.0
-                agents.vy[i] = noise * (rng.random() - 0.5) * 2.0
+                # 定向搜索：以 search_speed 沿当前朝向前进，偶尔换向
+                if rng.random() < 0.05:  # 5% 概率换向
+                    angle = rng.random() * 2.0 * np.pi
+                    agents.vx[i] = search_speed * np.cos(angle)
+                    agents.vy[i] = search_speed * np.sin(angle)
+                elif agents.vx[i] == 0.0 and agents.vy[i] == 0.0:
+                    angle = rng.random() * 2.0 * np.pi
+                    agents.vx[i] = search_speed * np.cos(angle)
+                    agents.vy[i] = search_speed * np.sin(angle)
                 continue
+
             k = int(choice[i])
             gx, gy = world.gradient(agents.x[i], agents.y[i], f"task_{k}")
             norm = np.hypot(gx, gy)
@@ -195,8 +243,9 @@ def make_allocation_stepper(
                 agents.vx[i] = speed * gx / norm
                 agents.vy[i] = speed * gy / norm
             else:
-                agents.vx[i] = noise * (rng.random() - 0.5) * 2.0
-                agents.vy[i] = noise * (rng.random() - 0.5) * 2.0
+                # 已在任务点上（梯度为零）：原地工作，不移动
+                agents.vx[i] = 0.0
+                agents.vy[i] = 0.0
 
         agents.x += agents.vx
         agents.y += agents.vy

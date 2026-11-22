@@ -218,7 +218,7 @@ class AllocationConfig:
     height: int = 60
     n_types: int = 3
     sites_per_type: int = 6
-    demand: float = 20.0
+    demand: float = 60.0
     regen: float = 0.05
 
     # 个体
@@ -227,7 +227,7 @@ class AllocationConfig:
     threshold_sigma: float = 0.0   # H3 的自变量
     speed: float = 0.6
     noise: float = 0.2
-    sense_radius: int = 2
+    sense_radius: int = 3
     work_amount: float = 1.0
 
     # 环境突变（测适应时间）
