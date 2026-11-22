@@ -1,0 +1,66 @@
+# ============================================================
+# 保密纪律：内部决策与计划不入库、不上传
+# ============================================================
+# 内部文档（决策、计划、研究笔记、会议记录）
+docs/private/
+docs/internal/
+docs/planning/
+docs/decisions/
+*.private.md
+*.internal.md
+*.planning.md
+*.notes.md
+
+# 研究草稿与未发表材料
+docs/research/
+research/
+drafts/
+papers/
+manuscripts/
+
+# 实验原始数据（大文件不入库，只保留 notes 和 config）
+experiments/**/results.csv
+experiments/**/*.npy
+experiments/**/*.npz
+experiments/**/*.png
+experiments/**/*.svg
+experiments/**/raw/
+!experiments/**/notes.md
+!experiments/**/config.yaml
+
+# ============================================================
+# Python
+# ============================================================
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Numba
+*.nbi
+*.nbc
+
+# ============================================================
+# 编辑器与系统
+# ============================================================
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============================================================
+# 本地配置与密钥
+# ============================================================
+.env
+.env.*
+*.key
+*.pem
+secrets/
