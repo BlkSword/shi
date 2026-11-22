@@ -113,6 +113,51 @@ class ForagingTask:
             "order", self.nest_x, self.nest_y, amplitude=10.0, length_scale=25.0
         )
 
+    def setup_clustered(
+        self,
+        n_clusters: int = 8,
+        per_cluster: int = 10,
+        spread: float = 3.0,
+    ) -> None:
+        """成簇放置资源点。
+
+        为什么需要成簇
+        --------------
+        均匀随机撒点会让刺激分布极度稀疏：80 个点撒在 3600 格里，
+        绝大多数个体感知不到任何资源，阈值分布没有发挥空间。
+
+        成簇分布让资源集中在少数区域，个体一旦靠近就能感知到强刺激，
+        刺激分布和阈值分布才有重叠。
+
+        这在生物学上也更真实：真实的食物源本来就是成簇的（果树、腐肉、花丛）。
+
+        Parameters
+        ----------
+        n_clusters : int
+            簇的数量。
+        per_cluster : int
+            每簇的资源点数。
+        spread : float
+            簇内资源点的空间标准差。
+        """
+        self.world.clear()
+        self.resources = []
+
+        for _ in range(n_clusters):
+            cx = float(self._rng.random() * self.world.width)
+            cy = float(self._rng.random() * self.world.height)
+            for _ in range(per_cluster):
+                x = float(np.clip(cx + self._rng.normal(0.0, spread), 0, self.world.width - 1))
+                y = float(np.clip(cy + self._rng.normal(0.0, spread), 0, self.world.height - 1))
+                self.resources.append((x, y))
+                self.world.deposit(x, y, "supply", self.resource_amount)
+
+        self.n_resources = len(self.resources)
+
+        self.world.set_radial_gradient(
+            "order", self.nest_x, self.nest_y, amplitude=10.0, length_scale=25.0
+        )
+
     def maintain_nest_marker(self) -> None:
         """巢穴标记是静态场，无需每 tick 维护。
 

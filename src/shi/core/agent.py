@@ -77,10 +77,12 @@ def response_probability(stimulus, threshold):
     s = np.asarray(stimulus, dtype=np.float64)
     theta = np.asarray(threshold, dtype=np.float64)
 
-    if np.any(s < 0):
-        raise ValueError("stimulus 必须非负")
     if np.any(theta <= 0):
         raise ValueError("threshold 必须为正")
+
+    # 负刺激钳制到 0：环境场可能因数值误差出现极小负值，
+    # 抛错会让长跑实验崩溃。物理上负浓度无意义，钳制是正确语义。
+    s = np.maximum(s, 0.0)
 
     s2 = s * s
     return s2 / (s2 + theta * theta)
@@ -91,6 +93,7 @@ def sample_thresholds(
     median: float = 1.0,
     sigma: float = 0.0,
     rng: np.random.Generator | None = None,
+    n_types: int = 1,
 ) -> np.ndarray:
     """从对数正态分布采样个体阈值。
 
@@ -120,14 +123,16 @@ def sample_thresholds(
     if sigma < 0:
         raise ValueError(f"sigma 必须非负，收到 {sigma}")
 
-    if sigma == 0.0:
-        return np.full(n, float(median), dtype=np.float64)
-
     if rng is None:
         rng = np.random.default_rng(0)
 
+    shape = (n,) if n_types == 1 else (n, n_types)
+
+    if sigma == 0.0:
+        return np.full(shape, float(median), dtype=np.float64)
+
     mu = np.log(median)
-    return rng.lognormal(mean=mu, sigma=sigma, size=n).astype(np.float64)
+    return rng.lognormal(mean=mu, sigma=sigma, size=shape).astype(np.float64)
 
 
 class AgentState:
@@ -179,9 +184,22 @@ class AgentState:
             self.y += rng.normal(0.0, jitter, self.n)
 
     def set_thresholds(self, thresholds: np.ndarray) -> None:
-        if thresholds.shape != (self.n,):
-            raise ValueError(f"阈值数组形状应为 ({self.n},)，收到 {thresholds.shape}")
-        self.threshold[:] = thresholds
+        """设置阈值。
+
+        支持两种形状：
+        - (n,)    标量阈值（单任务）
+        - (n, K)  阈值向量（多任务，每个个体对每类任务一个阈值）
+        """
+        arr = np.asarray(thresholds, dtype=np.float64)
+        if arr.shape == (self.n,):
+            self.threshold[:] = arr
+        elif arr.shape[0] == self.n:
+            # 向量阈值：重新分配存储
+            self.threshold = arr.copy()
+        else:
+            raise ValueError(
+                f"阈值数组形状应为 ({self.n},) 或 ({self.n}, K)，收到 {arr.shape}"
+            )
 
     # ---------- 查询 ----------
 

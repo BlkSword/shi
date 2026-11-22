@@ -37,9 +37,10 @@ class TestResponseProbability:
         assert p.shape == (3,)
         assert p[0] == pytest.approx(0.5)
 
-    def test_rejects_negative_stimulus(self):
-        with pytest.raises(ValueError):
-            response_probability(-1.0, 1.0)
+    def test_negative_stimulus_clamped_to_zero(self):
+        """负刺激钳制为 0（环境场可能有数值误差产生的极小负值）。"""
+        assert response_probability(-1.0, 1.0) == 0.0
+        assert response_probability(-1e-12, 1.0) == 0.0
 
     def test_rejects_nonpositive_threshold(self):
         with pytest.raises(ValueError):

@@ -5,12 +5,20 @@ import pytest
 
 from shi.core.agent import AgentState
 from shi.core.engine import Engine
-from shi.core.world import PheromoneField
-from shi.tasks.foraging import ForagingTask, make_foraging_stepper
+from shi.core.world import ChannelSpec, PheromoneField
+from shi.tasks.foraging import FORAGING_CHANNELS, ForagingTask, make_foraging_stepper
+
+
+def _make_world(width=40, height=40):
+    channels = [
+        ChannelSpec(n, decay=dc, diffusion=df)
+        for n, (dc, df) in FORAGING_CHANNELS.items()
+    ]
+    return PheromoneField(width, height, channels=channels)
 
 
 def _make_task(seed=0, n_resources=20):
-    world = PheromoneField(40, 40)
+    world = _make_world(40, 40)
     task = ForagingTask(
         world=world,
         nest_x=20.0,
@@ -114,7 +122,7 @@ class TestForagingStepper:
 
 class TestForagingDeterminism:
     def _run(self, seed: int, n_ticks: int = 100) -> list[str]:
-        world = PheromoneField(40, 40)
+        world = _make_world(40, 40)
         task = ForagingTask(
             world=world, nest_x=20.0, nest_y=20.0, n_resources=20,
             rng=np.random.default_rng(seed),

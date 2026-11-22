@@ -25,9 +25,20 @@ import numpy as np
 from shi.core.agent import AgentState, sample_thresholds
 from shi.core.engine import Engine
 from shi.core.world import ChannelSpec, PheromoneField
+from shi.tasks.allocation import (
+    AllocationTask,
+    make_allocation_stepper,
+    make_allocation_world,
+)
 from shi.tasks.foraging import ForagingTask, make_foraging_stepper
 
-__all__ = ["ForagingConfig", "run_foraging", "save_experiment"]
+__all__ = [
+    "ForagingConfig",
+    "AllocationConfig",
+    "run_foraging",
+    "run_allocation",
+    "save_experiment",
+]
 
 
 @dataclass
@@ -192,3 +203,134 @@ def save_experiment(
         (p / f"{name}_results.csv").write_text("\n".join(lines), encoding="utf-8")
 
     return p
+
+
+@dataclass
+class AllocationConfig:
+    """多任务分配实验配置。
+
+    这是检验 H3（异质性）的主实验。与觅食任务不同，
+    多任务设定下异质性有明确的作用机制：分工。
+    """
+
+    # 世界
+    width: int = 60
+    height: int = 60
+    n_types: int = 3
+    sites_per_type: int = 6
+    demand: float = 20.0
+    regen: float = 0.05
+
+    # 个体
+    n_agents: int = 150
+    threshold_median: float = 1.0
+    threshold_sigma: float = 0.0   # H3 的自变量
+    speed: float = 0.6
+    noise: float = 0.2
+    sense_radius: int = 2
+    work_amount: float = 1.0
+
+    # 环境突变（测适应时间）
+    shift_at: int = 0              # 0 表示不突变
+    shift_type: int = 0            # 突变时把哪个类型的需求清零
+
+    # 运行
+    n_ticks: int = 1500
+    record_every: int = 20
+    hash_every: int = 100
+    seed: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def run_allocation(cfg: AllocationConfig) -> dict[str, Any]:
+    """跑一次多任务分配实验。
+
+    如果 cfg.shift_at > 0，会在该 tick 触发环境突变：
+    把 shift_type 类型的所有任务点需求清零，
+    然后观察系统多久恢复（适应时间）。
+    """
+    t_start = time.perf_counter()
+
+    world = make_allocation_world(cfg.width, cfg.height, cfg.n_types)
+    task = AllocationTask(
+        world,
+        n_types=cfg.n_types,
+        sites_per_type=cfg.sites_per_type,
+        demand=cfg.demand,
+        regen=cfg.regen,
+        rng=np.random.default_rng(cfg.seed),
+    )
+    task.setup()
+
+    agents = AgentState(cfg.n_agents)
+    agents.place_random(
+        float(cfg.width), float(cfg.height), np.random.default_rng(cfg.seed + 1)
+    )
+    agents.set_thresholds(
+        sample_thresholds(
+            cfg.n_agents,
+            median=cfg.threshold_median,
+            sigma=cfg.threshold_sigma,
+            rng=np.random.default_rng(cfg.seed + 2),
+            n_types=cfg.n_types,
+        )
+    )
+
+    stepper = make_allocation_stepper(
+        task,
+        speed=cfg.speed,
+        noise=cfg.noise,
+        sense_radius=cfg.sense_radius,
+        work_amount=cfg.work_amount,
+    )
+
+    engine = Engine(
+        world=world,
+        agents=agents,
+        seed=cfg.seed,
+        stepper=stepper,
+        hash_every=cfg.hash_every,
+    )
+
+    shifted = False
+    shift_tick = 0
+
+    for _ in range(cfg.n_ticks):
+        # 环境突变：把某个类型的需求清零
+        if cfg.shift_at > 0 and not shifted and engine.tick >= cfg.shift_at:
+            # 精确清零：读取当前值再减去它，避免产生负浓度
+            ch = f"task_{cfg.shift_type}"
+            for x, y in task.sites[cfg.shift_type]:
+                cur = world.read(x, y, ch)
+                if cur > 0:
+                    world.deposit(x, y, ch, -cur)
+            shifted = True
+            shift_tick = engine.tick
+
+        engine.step()
+
+        if cfg.record_every > 0 and engine.tick % cfg.record_every == 0:
+            engine.metrics.record(
+                tick=engine.tick,
+                work_done=task.work_done,
+                completion=task.completion(),
+                balance=task.balance(),
+                active=int(np.count_nonzero(agents.state > 0)),
+            )
+
+    elapsed = time.perf_counter() - t_start
+
+    return {
+        "config": cfg.to_dict(),
+        "elapsed_sec": elapsed,
+        "work_done": task.work_done,
+        "completion": task.completion(),
+        "balance": task.balance(),
+        "work_by_type": task.work_by_type.tolist(),
+        "shifted": shifted,
+        "shift_tick": shift_tick,
+        "hash_sequence": engine.hash_sequence(),
+        "metrics": engine.metrics.to_rows(),
+    }
