@@ -57,6 +57,20 @@
     thresholds  : float64[n]
     states      : int8[n]
 
+## 基准任务
+
+框架提供四个基准任务，各自针对不同的研究问题：
+
+| 任务 | 模块 | 研究问题 |
+|---|---|---|
+| 觅食 | tasks/foraging.py | 基础协作：资源采集与运输 |
+| 多任务分配 | tasks/allocation.py | 分工：阈值异质性如何产生任务分化 |
+| 延迟觅食 | tasks/delayed_foraging.py | 环境记忆：信息容量如何限制性能 |
+| 目标聚集 | tasks/aggregation.py | 目标注入：环境塑造能否引导系统 |
+
+每个任务都提供 `make_*_world()` 和 `make_*_stepper()` 两个工厂函数，
+前者构造环境，后者构造个体行为更新函数。
+
 ## 依赖
 
 - 必需：NumPy
