@@ -44,7 +44,7 @@ def run_method(method: str, seed: int, ticks: int, n_agents: int) -> dict:
     elif method == "potential":
         shape_potential(t, amplitude=100.0, length_scale=15.0)
     elif method == "boundary":
-        shape_boundary(t, funnel_width=8.0)
+        shape_boundary(t, n_rings=3, ring_gap=6.0, gap_ratio=0.15)
     elif method == "feedback":
         shape_feedback(t, base_level=1.0, gradient_strength=10.0)
     else:

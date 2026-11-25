@@ -155,43 +155,73 @@ def shape_potential(
 
 def shape_boundary(
     task: AggregationTask,
-    funnel_width: float = 8.0,
-    wall_thickness: int = 2,
+    n_rings: int = 3,
+    ring_gap: float = 6.0,
+    gap_ratio: float = 0.15,
+    rng: np.random.Generator | None = None,
 ) -> None:
-    """方法 B：边界条件设计。
+    """方法 B：边界条件设计（同心环 + 缺口）。
 
-    用不可通行区域形成漏斗，把个体导向目标。
+    设计
+    ----
+    在目标周围画 n_rings 个同心环墙，每个环上开一个缺口。
+    缺口的位置逐环错开，形成一条需要「绕行」的路径。
 
-    实现：在目标周围画一个「漏斗」——
-    从世界边缘到目标，逐渐收窄的通道。
-    通道外的区域被标记为 blocked。
+    为什么这样设计
+    --------------
+    早期版本用「漏斗」设计，结果阻挡了 94.5% 的格子，
+    个体一开始就站在被阻挡的格子上，完全冻住——这不是「边界无效」，
+    是边界实现错误。
+
+    同心环 + 缺口的设计更合理：
+    - 只阻挡环本身（细线），不阻挡大片区域
+    - 个体必须找到缺口才能进入下一层
+    - 缺口错开，迫使个体绕行
+    - 这正是「探索能力」应该起作用的地方
+
+    Parameters
+    ----------
+    n_rings : int
+        同心环数量。
+    ring_gap : float
+        环之间的间距。
+    gap_ratio : float
+        缺口占整圈的比例（0-1）。0.15 表示缺口约 54 度。
+    rng : numpy.random.Generator | None
+        缺口位置的随机源。
     """
     w = task.world
     w.clear()
 
+    if rng is None:
+        rng = np.random.default_rng(0)
+
     blocked = np.zeros((w.height, w.width), dtype=bool)
     ys, xs = np.mgrid[0 : w.height, 0 : w.width]
 
-    # 到目标的距离
-    dist = np.hypot(xs - task.target_x, ys - task.target_y)
+    # 到目标的距离和角度
+    dx = xs - task.target_x
+    dy = ys - task.target_y
+    dist = np.hypot(dx, dy)
+    angle = np.arctan2(dy, dx)
 
-    # 漏斗：距离目标越远，允许的横向偏移越小
-    # 用极坐标：角度偏离目标方向超过阈值就阻挡
-    angle_to_target = np.arctan2(task.target_y - ys, task.target_x - xs)
-    angle_from_center = np.arctan2(ys - w.height / 2.0, xs - w.width / 2.0)
+    # 环的厚度：至少 1.5 格，否则在整数网格上采不到
+    thickness = max(1.5, ring_gap * 0.25)
 
-    # 角度差（归一化到 [-pi, pi]）
-    angle_diff = np.abs(np.arctan2(
-        np.sin(angle_from_center - angle_to_target),
-        np.cos(angle_from_center - angle_to_target),
-    ))
+    for k in range(1, n_rings + 1):
+        radius = k * ring_gap
+        # 环本身：距离在 [radius-thickness/2, radius+thickness/2] 内
+        on_ring = np.abs(dist - radius) <= thickness / 2.0
 
-    # 允许的角度范围随距离收窄
-    max_angle = np.pi * np.clip(dist / (w.width * 0.8), 0.15, 1.0)
-    blocked = angle_diff > max_angle
+        # 缺口：随机角度，逐环错开
+        gap_angle = rng.random() * 2.0 * np.pi
+        # 角度差（归一化到 [-pi, pi]）
+        angle_diff = np.abs(
+            np.arctan2(np.sin(angle - gap_angle), np.cos(angle - gap_angle))
+        )
+        in_gap = angle_diff < (gap_ratio * 2.0 * np.pi) / 2.0
 
-    # 目标附近不阻挡
-    blocked &= dist > funnel_width
+        blocked |= on_ring & ~in_gap
 
     task.blocked = blocked
 
@@ -225,6 +255,8 @@ def make_aggregation_stepper(
     task: AggregationTask,
     speed: float = 0.8,
     noise: float = 0.1,
+    exploration: float = 0.0,
+    explore_steps: int = 20,
 ):
     """构造聚集任务的个体行为更新函数。
 
@@ -235,14 +267,41 @@ def make_aggregation_stepper(
 
     没有记忆、没有阈值、没有内部状态。
     这是 G2 的关键：规则固定，只有环境可变。
+
+    Parameters
+    ----------
+    exploration : float
+        探索强度（0 = 纯梯度跟随，>0 = 被阻挡时随机探索）。
+        这是「同构原则」实验的关键参数：
+        - exploration=0：个体只会跟随梯度，边界条件应该无效
+        - exploration>0：个体有探索能力，边界条件可能变有效
+    explore_steps : int
+        被阻挡后持续探索的 tick 数。
     """
 
+    # 探索状态：每个个体剩余探索 tick 数（0 表示不探索）
+    explore_left = np.zeros(0, dtype=np.int32)
+    explore_angle = np.zeros(0, dtype=np.float64)
+
     def step(agents: AgentState, world: PheromoneField, tick: int, rng: np.random.Generator) -> None:
+        nonlocal explore_left, explore_angle
         n = agents.n
         if n == 0:
             return
 
+        # 惰性初始化探索状态（个体数可能变化）
+        if explore_left.shape[0] != n:
+            explore_left = np.zeros(n, dtype=np.int32)
+            explore_angle = np.zeros(n, dtype=np.float64)
+
         for i in range(n):
+            # 探索模式：沿固定方向走，直到探索结束
+            if explore_left[i] > 0:
+                explore_left[i] -= 1
+                agents.vx[i] = speed * np.cos(explore_angle[i])
+                agents.vy[i] = speed * np.sin(explore_angle[i])
+                continue
+
             gx, gy = world.gradient(agents.x[i], agents.y[i], "field")
             norm = np.hypot(gx, gy)
 
@@ -260,6 +319,24 @@ def make_aggregation_stepper(
         for i in range(n):
             nx = float(np.clip(new_x[i], 0.0, world.width - 1))
             ny = float(np.clip(new_y[i], 0.0, world.height - 1))
+
+            # 若个体当前站在被阻挡的格子上（例如初始位置），
+            # 允许它移动到任意相邻的非阻挡格（逃逸规则）。
+            # 没有这条规则，个体会被永久冻住。
+            if task.is_blocked(agents.x[i], agents.y[i]):
+                escaped = False
+                for _ in range(8):
+                    ang = rng.random() * 2.0 * np.pi
+                    ex = float(np.clip(agents.x[i] + np.cos(ang), 0.0, world.width - 1))
+                    ey = float(np.clip(agents.y[i] + np.sin(ang), 0.0, world.height - 1))
+                    if not task.is_blocked(ex, ey):
+                        agents.x[i] = ex
+                        agents.y[i] = ey
+                        escaped = True
+                        break
+                if escaped:
+                    continue
+
             if not task.is_blocked(nx, ny):
                 agents.x[i] = nx
                 agents.y[i] = ny
@@ -269,5 +346,10 @@ def make_aggregation_stepper(
                     agents.x[i] = nx
                 elif not task.is_blocked(agents.x[i], ny):
                     agents.y[i] = ny
+
+                # 探索：被阻挡且探索强度 > 0 时，随机选方向探索
+                if exploration > 0.0 and rng.random() < exploration:
+                    explore_left[i] = explore_steps
+                    explore_angle[i] = rng.random() * 2.0 * np.pi
 
     return step

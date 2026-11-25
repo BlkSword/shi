@@ -83,7 +83,7 @@ class TestShaping:
 
     def test_boundary_creates_blocked_mask(self):
         w, t = self._make()
-        shape_boundary(t, funnel_width=5.0)
+        shape_boundary(t, n_rings=3, ring_gap=6.0, gap_ratio=0.15)
         assert t.blocked is not None
         assert t.blocked.shape == (40, 40)
         # 目标附近不应被阻挡
@@ -99,7 +99,7 @@ class TestStepper:
         elif shape == "feedback":
             shape_feedback(t)
         elif shape == "boundary":
-            shape_boundary(t)
+            shape_boundary(t, n_rings=3, ring_gap=6.0, gap_ratio=0.15)
         a = AgentState(30)
         a.place_random(40.0, 40.0, np.random.default_rng(0))
         return w, t, a

@@ -21,7 +21,7 @@ def run(method, seed=0, ticks=800, n_agents=100):
     elif method == "potential":
         shape_potential(t, amplitude=100.0, length_scale=15.0)
     elif method == "boundary":
-        shape_boundary(t, funnel_width=8.0)
+        shape_boundary(t, n_rings=3, ring_gap=6.0, gap_ratio=0.15)
     elif method == "feedback":
         shape_feedback(t, base_level=1.0, gradient_strength=10.0)
 
