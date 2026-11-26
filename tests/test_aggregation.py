@@ -9,6 +9,7 @@ from shi.tasks.aggregation import (
     AggregationTask,
     make_aggregation_stepper,
     make_aggregation_world,
+    shape_aligned_boundary,
     shape_boundary,
     shape_feedback,
     shape_potential,
@@ -80,6 +81,28 @@ class TestShaping:
         near = w.read(20.0, 20.0, "field")
         far = w.read(0.0, 0.0, "field")
         assert near > far
+
+    def test_aligned_boundary_low_density(self):
+        """对齐边界在低阈值下密度应该很低。"""
+        w, t = self._make()
+        shape_potential(t, amplitude=100.0, length_scale=10.0)
+        density = shape_aligned_boundary(t, grad_threshold=0.5)
+        assert 0.0 <= density <= 0.05, f"低阈值下密度应很低，实际 {density:.1%}"
+
+    def test_aligned_boundary_high_threshold_blocks_more(self):
+        """阈值越高，阻挡越多。"""
+        w, t = self._make()
+        shape_potential(t, amplitude=100.0, length_scale=10.0)
+        d_low = shape_aligned_boundary(t, grad_threshold=0.5)
+        d_high = shape_aligned_boundary(t, grad_threshold=5.0)
+        assert d_high > d_low
+
+    def test_aligned_boundary_preserves_target(self):
+        """目标附近不应被阻挡。"""
+        w, t = self._make()
+        shape_potential(t, amplitude=100.0, length_scale=10.0)
+        shape_aligned_boundary(t, grad_threshold=2.0, min_target_dist=5.0)
+        assert not t.is_blocked(20.0, 20.0)
 
     def test_boundary_creates_blocked_mask(self):
         w, t = self._make()

@@ -32,6 +32,7 @@ __all__ = [
     "make_aggregation_stepper",
     "shape_potential",
     "shape_boundary",
+    "shape_aligned_boundary",
     "shape_feedback",
 ]
 
@@ -224,6 +225,65 @@ def shape_boundary(
         blocked |= on_ring & ~in_gap
 
     task.blocked = blocked
+
+
+def shape_aligned_boundary(
+    task: AggregationTask,
+    grad_threshold: float = 0.5,
+    min_target_dist: float = 5.0,
+) -> float:
+    """方法 B'：对齐约束（只在梯度弱处放边界）。
+
+    设计动机
+    --------
+    实验发现：冲突的约束会破坏梯度引导。
+    势能场单独用聚集度 0.926，加上同心环边界后掉到 0.209。
+
+    机制：个体沿梯度朝目标走，撞上墙被挡住，梯度仍指向目标（穿过墙），
+    个体在墙边反复尝试无法前进，永久卡住。
+
+    对齐约束的思路
+    --------------
+    只在**梯度接近零**的地方放边界。这些地方个体本来也不会主动去，
+    所以不会造成「想做但做不到」的冲突。
+
+    效果（实测）
+    ------------
+    - 梯度阈值 0.5：边界密度 0.7%，聚集度 0.921（几乎无损）
+    - 梯度阈值 2.0：边界密度 26.8%，聚集度 0.505
+    - 对比冲突边界：密度 1.3% 时聚集度已掉到 0.575
+
+    同样密度下，对齐约束的性能显著更高。
+
+    Parameters
+    ----------
+    grad_threshold : float
+        梯度强度阈值。低于此值的地方才放边界。
+    min_target_dist : float
+        目标附近不阻挡的最小距离。
+
+    Returns
+    -------
+    float
+        边界密度（被阻挡格子的比例）。
+    """
+    w = task.world
+    ys, xs = np.mgrid[0 : w.height, 0 : w.width]
+
+    # 计算全场的梯度强度
+    field = w.data[0]
+    gy, gx = np.gradient(field)
+    grad_mag = np.hypot(gx, gy)
+
+    # 只在梯度弱的地方放边界
+    blocked = grad_mag < grad_threshold
+
+    # 目标附近不阻挡
+    dist = np.hypot(xs - task.target_x, ys - task.target_y)
+    blocked &= dist > min_target_dist
+
+    task.blocked = blocked
+    return float(blocked.mean())
 
 
 def shape_feedback(
