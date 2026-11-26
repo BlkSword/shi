@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["shi-core", "shi-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Shi Project"]
+
+[workspace.dependencies]
+shi-core = { path = "shi-core" }
+rand = "0.8"
+rand_pcg = "0.3"
+rayon = "1.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

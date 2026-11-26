@@ -1,0 +1,13 @@
+[package]
+name = "shi-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "势 / Shi — 无中枢决策系统仿真内核"
+
+[dependencies]
+rand = { workspace = true }
+rand_pcg = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
