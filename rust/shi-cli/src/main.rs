@@ -12,8 +12,9 @@ fn main() {
     match cmd {
         "bench" => bench(),
         "verify" => verify(),
+        "syssim" => syssim(),
         _ => {
-            eprintln!("用法: shi <bench|verify>");
+            eprintln!("用法: shi <bench|verify|syssim>");
             std::process::exit(1);
         }
     }
@@ -122,4 +123,106 @@ fn verify() {
         println!("[FAIL] {}/{} 次运行哈希不一致", mismatches, runs);
         std::process::exit(1);
     }
+}
+
+/// 分布式系统自愈实验
+fn syssim() {
+    use shi_syssim::{run, ExpConfig};
+
+    println!("=== 分布式系统自愈：去中心化 vs 中心化 ===");
+    println!("模型：1000 节点、持续任务到达（每 tick 15 个任务）、需求 10/任务");
+    println!();
+
+    // 先测容量上限
+    let base = ExpConfig {
+        n_nodes: 1000,
+        n_tasks: 100,
+        ticks: 300,
+        central_fail_at: None,
+        node_fail_prob: 0.0,
+        arrival_rate: 15.0,
+        seed: 0,
+    };
+
+    // 场景 1：正常运行
+    println!("[场景 1] 正常运行（无故障）");
+    let d = run("decentralized", &base);
+    let c = run("centralized", &base);
+    println!(
+        "  去中心化: 完成率 {:>5.1}%  任务 {} 个  负载均衡 {:.3}",
+        d.completed_ratio * 100.0,
+        d.total_tasks,
+        d.load_balance
+    );
+    println!(
+        "  中心化:   完成率 {:>5.1}%  任务 {} 个  负载均衡 {:.3}",
+        c.completed_ratio * 100.0,
+        c.total_tasks,
+        c.load_balance
+    );
+    println!();
+
+    // 场景 2：中心失效
+    println!("[场景 2] 中心在 tick 150 失效");
+    let cfg2 = ExpConfig {
+        central_fail_at: Some(150),
+        ..base.clone()
+    };
+    let d2 = run("decentralized", &cfg2);
+    let c2 = run("centralized", &cfg2);
+    println!(
+        "  去中心化: 完成率 {:>5.1}%",
+        d2.completed_ratio * 100.0
+    );
+    println!(
+        "  中心化:   完成率 {:>5.1}%  （中心失效后停止调度）",
+        c2.completed_ratio * 100.0
+    );
+    println!(
+        "  -> 差异 {:+.1} 个百分点",
+        (d2.completed_ratio - c2.completed_ratio) * 100.0
+    );
+    println!();
+
+    // 场景 3：节点故障
+    println!("[场景 3] 持续节点故障（每 50 tick 失效 2%）");
+    let cfg3 = ExpConfig {
+        node_fail_prob: 0.02,
+        ..base.clone()
+    };
+    let d3 = run("decentralized", &cfg3);
+    let c3 = run("centralized", &cfg3);
+    println!(
+        "  去中心化: 完成率 {:>5.1}%  失效节点 {}",
+        d3.completed_ratio * 100.0,
+        d3.failed_nodes
+    );
+    println!(
+        "  中心化:   完成率 {:>5.1}%  失效节点 {}",
+        c3.completed_ratio * 100.0,
+        c3.failed_nodes
+    );
+    println!();
+
+    // 场景 4：中心失效 + 节点故障
+    println!("[场景 4] 中心失效 + 持续节点故障（最坏情况）");
+    let cfg4 = ExpConfig {
+        central_fail_at: Some(150),
+        node_fail_prob: 0.02,
+        ..base.clone()
+    };
+    let d4 = run("decentralized", &cfg4);
+    let c4 = run("centralized", &cfg4);
+    println!(
+        "  去中心化: 完成率 {:>5.1}%",
+        d4.completed_ratio * 100.0
+    );
+    println!(
+        "  中心化:   完成率 {:>5.1}%",
+        c4.completed_ratio * 100.0
+    );
+    println!(
+        "  差异: {:+.1} 个百分点",
+        (d4.completed_ratio - c4.completed_ratio) * 100.0
+    );
 }

@@ -154,6 +154,7 @@ dependencies = [
  "rand_pcg",
  "serde_json",
  "shi-core",
+ "shi-syssim",
 ]
 
 [[package]]
@@ -163,6 +164,17 @@ dependencies = [
  "rand",
  "rand_pcg",
  "serde",
+]
+
+[[package]]
+name = "shi-syssim"
+version = "0.1.0"
+dependencies = [
+ "rand",
+ "rand_pcg",
+ "serde",
+ "serde_json",
+ "shi-core",
 ]
 
 [[package]]

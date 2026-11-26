@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["shi-core", "shi-cli"]
+members = ["shi-core", "shi-cli", "shi-syssim"]
 
 [workspace.package]
 version = "0.1.0"
