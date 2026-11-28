@@ -22,6 +22,7 @@ pub mod coordinator;
 pub mod experiment;
 pub mod gossip;
 pub mod ha_control;
+pub mod multimem;
 pub mod network;
 pub mod swarm;
 pub mod task;
@@ -31,6 +32,7 @@ pub use coordinator::{CentralizedCoordinator, DecentralizedCoordinator, Coordina
 pub use experiment::{run, ExpConfig};
 pub use gossip::{GossipConfig, GossipView};
 pub use ha_control::{HaConfig, HaControlPlane, ReplicaState};
+pub use multimem::{MultiMem, MultiMemConfig, MultiMemStats};
 pub use network::{Network, NetworkConfig, Partition};
 pub use swarm::{Drone, DroneState, Swarm, SwarmConfig, Target};
 pub use task::{Task, TaskConfig};

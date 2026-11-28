@@ -115,6 +115,16 @@ pub struct SwarmConfig {
     /// 【重放】每当有目标被摧毁，以该概率在原地重新注入标记
     /// 无人机被引向已经空无一物的位置
     pub replay_rate: f64,
+    /// 【重放·时间对齐】是否用预设假坐标从 tick 0 开始重放
+    ///
+    /// 为什么需要这个开关
+    /// ------------------
+    /// 默认的重放依赖「目标被摧毁」事件，最早也要到 tick 300 才有诱饵，
+    /// 有效攻击时间只有其他攻击的 2/3 —— 这让重放在分类学对比中系统性偏弱。
+    ///
+    /// 打开此开关后，在构造时生成 n_targets 个「幽灵位置」，
+    /// 重放从 tick 0 就在这些位置生效，消除了时间混淆。
+    pub replay_fixed: bool,
     /// 【淹没】每 tick 注入的随机噪声标记数（铺满全场，破坏信噪比）
     pub flood_marks: usize,
 
@@ -146,6 +156,7 @@ impl Default for SwarmConfig {
             decoy_rate: 0.0,
             decoys_per_tick: 0,
             replay_rate: 0.0,
+            replay_fixed: false,
             flood_marks: 0,
             // 默认无认证：攻击默认生效，只有显式设为 1.0 才启用完美认证
             auth_ratio: 0.0,
@@ -197,6 +208,8 @@ pub struct Swarm {
     pub decoy_positions: Vec<(f64, f64)>,
     /// 【重放】已被摧毁的目标位置（攻击者会在这里重放标记）
     pub dead_target_positions: Vec<(f64, f64)>,
+    /// 【重放·时间对齐】预设的幽灵位置（无对应目标，纯诱饵）
+    pub ghost_positions: Vec<(f64, f64)>,
     /// 对抗统计
     pub adversary: AdversaryStats,
     rng: Pcg64Mcg,
@@ -206,6 +219,15 @@ impl Swarm {
     pub fn new(config: SwarmConfig) -> Self {
         let mut rng = Pcg64Mcg::seed_from_u64(config.seed);
         let size = config.field_size;
+
+        // 幽灵位置：与目标同数量，随机分布（时间对齐的重放用）
+        let ghost_positions: Vec<(f64, f64)> = if config.replay_fixed {
+            (0..config.n_targets)
+                .map(|_| (rng.gen::<f64>() * size, rng.gen::<f64>() * size))
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         // 无人机：随机初始位置
         let drones: Vec<Drone> = (0..config.n_drones)
@@ -274,6 +296,7 @@ impl Swarm {
             jammed: vec![false; n_channels],
             decoy_positions: Vec::new(),
             dead_target_positions: Vec::new(),
+            ghost_positions,
             adversary: AdversaryStats::default(),
             rng,
         }
@@ -344,14 +367,18 @@ impl Swarm {
             }
         }
 
-        // ---- 重放：在已摧毁目标的位置重新写标记 ----
-        if self.config.replay_rate > 0.0 && !self.dead_target_positions.is_empty() {
-            let n_dead = self.dead_target_positions.len();
-            for k in 0..n_dead {
+        // ---- 重放：写标记到「已摧毁目标」或「幽灵位置」----
+        if self.config.replay_rate > 0.0 {
+            let sites: Vec<(f64, f64)> = if self.config.replay_fixed {
+                self.ghost_positions.clone()
+            } else {
+                self.dead_target_positions.clone()
+            };
+
+            for (x, y) in sites {
                 if self.rng.gen::<f64>() >= self.config.replay_rate {
                     continue;
                 }
-                let (x, y) = self.dead_target_positions[k];
                 let ch = self.rng.gen_range(0..n_ch);
                 if !self.channel_usable(ch) {
                     continue;
