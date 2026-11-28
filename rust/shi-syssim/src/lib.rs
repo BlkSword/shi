@@ -20,11 +20,17 @@
 pub mod cluster;
 pub mod coordinator;
 pub mod experiment;
+pub mod gossip;
+pub mod ha_control;
+pub mod network;
 pub mod task;
 
 pub use cluster::{Cluster, ClusterConfig, NodeState};
 pub use coordinator::{CentralizedCoordinator, DecentralizedCoordinator, Coordinator};
 pub use experiment::{run, ExpConfig};
+pub use gossip::{GossipConfig, GossipView};
+pub use ha_control::{HaConfig, HaControlPlane, ReplicaState};
+pub use network::{Network, NetworkConfig, Partition};
 pub use task::{Task, TaskConfig};
 
 /// 仿真结果

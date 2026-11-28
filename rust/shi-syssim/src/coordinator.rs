@@ -274,6 +274,11 @@ impl Coordinator for CentralizedCoordinator {
 }
 
 impl CentralizedCoordinator {
+    /// 处理已分配任务（无 leader 时仍需处理手头的任务）
+    pub fn process_tasks_public(cluster: &mut Cluster, tasks: &mut [Task]) {
+        Self::process_tasks(cluster, tasks)
+    }
+
     fn process_tasks(cluster: &mut Cluster, tasks: &mut [Task]) {
         for i in 0..cluster.nodes.len() {
             if cluster.nodes[i].failed || cluster.nodes[i].owned.is_empty() {

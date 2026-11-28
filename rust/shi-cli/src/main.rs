@@ -141,6 +141,7 @@ fn syssim() {
         central_fail_at: None,
         node_fail_prob: 0.0,
         arrival_rate: 15.0,
+        ha_replicas: 3,
         seed: 0,
     };
 

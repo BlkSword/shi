@@ -16,6 +16,7 @@ fn main() {
             central_fail_at: Some(50),
             node_fail_prob: 0.0,
             arrival_rate: 12.0 * (n_nodes as f64 / 1000.0),
+            ha_replicas: 3,
             seed: 0,
         };
 

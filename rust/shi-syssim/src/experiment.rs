@@ -2,6 +2,7 @@
 
 use crate::cluster::{Cluster, ClusterConfig};
 use crate::coordinator::{CentralizedCoordinator, Coordinator, DecentralizedCoordinator};
+use crate::ha_control::{HaConfig, HaControlPlane};
 use crate::task::{Task, TaskConfig};
 use crate::SimResult;
 
@@ -17,6 +18,8 @@ pub struct ExpConfig {
     pub node_fail_prob: f64,
     /// 每 tick 新到达的任务数（持续负载）
     pub arrival_rate: f64,
+    /// HA 副本数（仅 "ha" 策略用）。1 = 单副本
+    pub ha_replicas: usize,
     pub seed: u64,
 }
 
@@ -29,6 +32,7 @@ impl Default for ExpConfig {
             central_fail_at: None,
             node_fail_prob: 0.0,
             arrival_rate: 0.0,
+            ha_replicas: 3,
             seed: 0,
         }
     }
@@ -110,6 +114,60 @@ pub fn run(strategy: &str, cfg: &ExpConfig) -> SimResult {
                     total_arrived += 1;
                 }
                 coord.step(&mut cluster, &mut tasks, &mut unassigned, t);
+                let done = tasks.iter().filter(|x| x.finished).count();
+                total_completed = done;
+                completed_history.push(done as f64 / total_arrived as f64);
+            }
+        }
+        "ha" => {
+            // 高可用 control plane：单副本等价于 centralized，
+            // 多副本在 leader 失效后重新选举，然后继续调度
+            let ha_cfg = HaConfig {
+                n_replicas: cfg.ha_replicas,
+                election_timeout: 10,
+                heartbeat_interval: 3,
+            };
+            let mut ha = HaControlPlane::new(ha_cfg, cfg.seed);
+            let mut coord = CentralizedCoordinator {
+                fail_at: None, // HA 自己管理失效
+                ..Default::default()
+            };
+
+            for t in 0..cfg.ticks {
+                if cfg.node_fail_prob > 0.0 && t > 0 && t % 50 == 0 {
+                    failed_nodes += cluster.inject_random_failure(cfg.node_fail_prob);
+                }
+
+                // 中心失效：杀掉**当前 leader**（真实故障模式）
+                // 剩余副本会通过选举恢复，这是 HA 的核心价值
+                if let Some(ft) = fail_tick {
+                    if t == ft {
+                        if let Some(leader) = ha.leader() {
+                            ha.fail_replica(leader);
+                        }
+                    }
+                }
+
+                // HA 推进：是否有可用 leader
+                let has_leader = ha.tick(t);
+
+                arrival_acc += cfg.arrival_rate;
+                while arrival_acc >= 1.0 {
+                    arrival_acc -= 1.0;
+                    unassigned.push_back(tasks.len());
+                    tasks.push(Task::new(next_task_id, task_cfg.demand));
+                    next_task_id += 1;
+                    total_arrived += 1;
+                }
+
+                if has_leader {
+                    coord.step(&mut cluster, &mut tasks, &mut unassigned, t);
+                } else {
+                    // 无 leader：只处理已分配任务（与单副本失效行为一致）
+                    cluster.step_field();
+                    CentralizedCoordinator::process_tasks_public(&mut cluster, &mut tasks);
+                }
+
                 let done = tasks.iter().filter(|x| x.finished).count();
                 total_completed = done;
                 completed_history.push(done as f64 / total_arrived as f64);
