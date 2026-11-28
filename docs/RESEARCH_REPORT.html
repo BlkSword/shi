@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>协调介质的能力边界 · 研究报告</title>
+<style>
+  :root{--fg:#e6edf3;--muted:#8b98a5;--line:#23303f;--accent:#22d3ee;--bg:#0b0f14;--card:#121820;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    line-height:1.8;font-size:16px}
+  .wrap{max-width:860px;margin:0 auto;padding:56px 28px 140px}
+  h1{font-size:2.1em;line-height:1.3;margin:0 0 .1em;letter-spacing:-.01em}
+  h2{font-size:1.45em;margin:2.6em 0 .8em;padding-bottom:.35em;border-bottom:1px solid var(--line);
+     color:#fff}
+  h3{font-size:1.12em;margin:1.9em 0 .5em;color:var(--accent)}
+  h4{font-size:1em;margin:1.4em 0 .4em;color:#c9d6e2}
+  p{margin:.85em 0}
+  a{color:var(--accent);text-decoration:none;border-bottom:1px solid rgba(34,211,238,.25)}
+  blockquote{margin:1.4em 0;padding:.9em 1.2em;background:#10242a;border-left:3px solid var(--accent);
+    border-radius:0 6px 6px 0;color:#cfe9ef}
+  blockquote p{margin:.3em 0}
+  hr{border:0;border-top:1px solid var(--line);margin:2.6em 0}
+  table{border-collapse:collapse;width:100%;margin:1.3em 0;font-size:.9em;background:var(--card);
+    border-radius:6px;overflow:hidden}
+  th,td{border:1px solid var(--line);padding:.55em .75em;text-align:left;vertical-align:top}
+  th{background:#182231;font-weight:600;color:#cfe9ef}
+  tr:nth-child(even) td{background:#0f151d}
+  pre{background:#070a0e;border:1px solid var(--line);padding:1.1em 1.2em;border-radius:8px;
+    overflow-x:auto;font-size:.86em;line-height:1.6;margin:1.3em 0}
+  code{font-family:"JetBrains Mono",Consolas,monospace;font-size:.9em;background:#182231;
+    padding:.12em .38em;border-radius:4px;color:#9dd6e4}
+  pre code{background:none;padding:0;color:#c9d6e2}
+  ul,ol{padding-left:1.6em;margin:.8em 0}
+  li{margin:.35em 0}
+  strong{color:#fff;font-weight:600}
+  em{color:#c9d6e2;font-style:normal;opacity:.9}
+</style>
+</head>
+<body><div class="wrap">
+<h1>协调介质的能力边界</h1>
+<h2>无中心系统的一组定量定律</h2>
+<blockquote><p>研究报告 · 2026-11-28</p><p>全部实验可复现：<code>git clone</code> 后 <code>cargo run --release --bin &lt;实验名&gt;</code></p><p>代码量：Rust 约 5000 行，85 个测试，跨机器确定性验证通过</p></blockquote>
+<hr>
+<h2>摘要</h2>
+<p>无中心系统（蜂群、集群、多智能体）靠<strong>共享介质</strong>协调：信息素、标记、共享内存、消息板。</p>
+<p>它们看起来千差万别，但受同一组约束支配。</p>
+<p>本研究用确定性仿真框架，在四个不同场景里定量测量了这些约束，得到四条定律：</p>
+<table><thead><tr><th>定律</th><th>一句话</th><th>最强证据</th></tr></thead><tbody><tr><td><strong>一、容量</strong></td><td>性能上限由介质的信息容量决定，不由个体的智能决定</td><td>个体复杂度效应量 <strong>d = -0.84</strong>（有害）</td></tr><tr><td><strong>二、对齐</strong></td><td>约束若不与信号同向，会破坏而非增强协调</td><td>加约束后性能从 0.926 崩到 <strong>0.209（-77%）</strong></td></tr><tr><td><strong>三、密度</strong></td><td>通信受限时，扩大规模会让系统变差</td><td>40 架 21.2% → 320 架 <strong>10.0%</strong></td></tr><tr><td><strong>四、污染</strong></td><td>伪造信息比删除信息更致命；只有能区分真假的防御才有效</td><td>注入 -43.8pp vs 干扰 -25.6pp；快速衰减<strong>净损 27pp</strong></td></tr></tbody></table>
+<p>第四条在多智能体共享记忆系统里独立验证成立：</p>
+<p>15% 的 agent 被劫持导致 <strong>43.5 个百分点</strong>的性能损失，</p>
+<p>而溯源认证恢复 <strong>100%</strong>，代价为零。</p>
+<p><strong>贯穿四条定律的统一判断</strong>：</p>
+<blockquote><p><strong>无中心系统的能力，是它协调介质的属性的函数——而不是它组成部分的智能的函数。</strong></p></blockquote>
+<p>这条判断与当前「给每个节点装更强的智能」的主流方向相反。</p>
+<hr>
+<h2>一、问题与方法</h2>
+<h3>1.1 为什么问这个问题</h3>
+<p>无中心系统在三个地方被大量使用：蜂群机器人、分布式集群、多智能体 AI。</p>
+<p>三者的工程实践各自演进，<strong>但很少互相引用</strong>。</p>
+<p>它们共享同一个数学结构：</p>
+<ul>
+<li>个体只感知局部</li>
+<li>协调靠改变/读取共享介质（stigmergy）</li>
+<li>没有一个组件持有全局状态</li>
+</ul>
+<p>如果这个结构是本质的，那么它们的<strong>能力边界应该由同样的因素决定</strong>。</p>
+<h3>1.2 方法：确定性仿真 + 对照实验</h3>
+<p><strong>核心要求是可复现。</strong> 涌现行为对初始条件敏感，浮点实现的微小差异会导致完全不同的宏观行为。</p>
+<p>不加约束的仿真实验，结论不可信。</p>
+<p>框架的三条硬约束：</p>
+<ol>
+<li><strong>固定时间步长</strong>，不用真实时间</li>
+<li><strong>独立随机流</strong>：每个个体从主种子派生自己的流，禁止全局 RNG</li>
+<li><strong>状态哈希</strong>：每 N tick 对全状态做 FNV-1a 哈希</li>
+</ol>
+<p><strong>验证结果</strong>：</p>
+<table><thead><tr><th>检查</th><th>结果</th></tr></thead><tbody><tr><td>同种子 100 次运行</td><td>哈希序列 <strong>100% 一致</strong></td></tr><tr><td>本地 Windows vs 远程 Linux</td><td>哈希<strong>逐位一致</strong></td></tr><tr><td>Rust 内核 vs Python 原型</td><td>算法对齐（后者用于快速验证）</td></tr></tbody></table>
+<p><strong>实现</strong>：Rust，100,000 个体 × 1,000 tick = <strong>1.63 秒</strong>（37M agent-ticks/s）。</p>
+<h3>1.3 四个场景</h3>
+<table><thead><tr><th>场景</th><th>介质</th><th>对应现实</th></tr></thead><tbody><tr><td>延迟觅食</td><td>多通道信息素</td><td>需要记忆的协作任务</td></tr><tr><td>目标聚集</td><td>势能场</td><td>环境塑造与目标注入</td></tr><tr><td>分布式调度</td><td>共享状态场</td><td>集群任务分配</td></tr><tr><td>蜂群攻击</td><td>有限信道标记</td><td>通信受限的多机协同</td></tr><tr><td>多智能体</td><td>共享记忆板</td><td>LLM agent 协作</td></tr></tbody></table>
+<hr>
+<h2>二、定律一：容量</h2>
+<blockquote><p><strong>系统的性能上限由协调介质的信息容量决定，个体智能无法突破这个上限——在容量充足时，个体智能甚至有害。</strong></p></blockquote>
+<h3>2.1 实验设计</h3>
+<p>任务：延迟觅食。资源只在「侦察窗口」可见、「采集窗口」可采，两窗口不重叠。</p>
+<p>个体没有记忆（硬编码约束），唯一的信息载体是环境。</p>
+<p>双因素设计：</p>
+<ul>
+<li><strong>因子 A（介质容量）</strong>：通道数 1 / 2 / 4 / 8</li>
+<li><strong>因子 B（个体复杂度）</strong>：简单（1 条规则）/ 中等（3 条）/ 复杂（10 条 + 自适应）</li>
+</ul>
+<p>控制变量：8 种资源类型。通道数 &lt; 类型数时必然发生<strong>类型混淆</strong>。</p>
+<h3>2.2 结果</h3>
+<p>采集效率（10 次重复）：</p>
+<table><thead><tr><th>通道数 \ 复杂度</th><th>简单</th><th>中等</th><th>复杂</th></tr></thead><tbody><tr><td>1</td><td>56.4%</td><td>56.4%</td><td>56.4%</td></tr><tr><td>2</td><td>72.3%</td><td>72.5%</td><td>66.9%</td></tr><tr><td>4</td><td><strong>81.0%</strong></td><td>79.8%</td><td>66.1%</td></tr><tr><td>8</td><td>80.9%</td><td>81.0%</td><td>70.2%</td></tr></tbody></table>
+<p>效应量：</p>
+<ul>
+<li><strong>环境容量：d = 3.26</strong>（大效应）</li>
+<li><strong>个体复杂度：d = -0.84</strong>（负效应）</li>
+</ul>
+<h3>2.3 三个推论</h3>
+<p><strong>推论 1：容量存在「够用」阈值。</strong></p>
+<p>通道 1→4 提升 24.6 个百分点；4→8 只提升 -0.1 个百分点。</p>
+<p>本实验中阈值 = 4，正好是资源类型数（8）的一半。</p>
+<p><strong>推论 2：智能无法弥补容量不足。</strong></p>
+<p>通道 1 时三个复杂度等级结果完全相同（56.4%）。</p>
+<p>信息不存在时，再聪明的处理也无济于事。</p>
+<p><strong>推论 3：容量充足时，智能有害。</strong></p>
+<p>通道 4 时，复杂度 3 比复杂度 1 差 <strong>14.9 个百分点</strong>。</p>
+<p>原因：环境已提供协调所需信息，个体额外的内部处理只引入噪声和延迟。</p>
+<h3>2.4 理论锚点</h3>
+<p>这印证了 Conant–Ashby 良好调节器定理（1970）：</p>
+<blockquote><p>任何好的调节器都必须是系统的模型。</p></blockquote>
+<p>无中枢约束说：模型不能放在任何个体里。</p>
+<p><strong>两条约束的交点只有一个解：把模型放进环境。</strong></p>
+<hr>
+<h2>三、定律二：对齐</h2>
+<blockquote><p><strong>约束本身无害，与信号冲突的约束才致命。</strong></p></blockquote>
+<h3>3.1 背景：目标注入</h3>
+<p>问题：给定<strong>固定的个体规则</strong>，能否通过塑造环境把系统吸引子移到指定位置？</p>
+<p>三个塑造方法（个体规则固定为纯梯度跟随）：</p>
+<table><thead><tr><th>方法</th><th>聚集度</th><th>改善</th></tr></thead><tbody><tr><td>不塑造</td><td>0.106 ± 0.011</td><td>0.5%</td></tr><tr><td><strong>势能景观</strong></td><td><strong>0.929 ± 0.002</strong></td><td><strong>96.7%</strong></td></tr><tr><td>边界条件</td><td>0.105 ± 0.011</td><td><strong>0.0%</strong></td></tr><tr><td>反馈通道</td><td>0.929 ± 0.002</td><td>96.7%</td></tr></tbody></table>
+<p><strong>边界条件完全无效。</strong> 个体被墙挡住后只会沿墙滑动，不会主动找出口。</p>
+<h3>3.2 更严重的发现：约束会破坏已有的引导</h3>
+<p>把势能场和边界叠加：</p>
+<table><thead><tr><th>配置</th><th>聚集度</th><th>平均距离</th></tr></thead><tbody><tr><td>只有势能场</td><td><strong>0.926</strong></td><td><strong>0.77</strong></td></tr><tr><td>势能场 + 边界</td><td><strong>0.209</strong></td><td>15.66</td></tr></tbody></table>
+<p><strong>加边界让性能从 0.926 崩到 0.209（-77%）。</strong></p>
+<p>机制：个体沿梯度朝目标移动 → 撞上环墙 → 梯度仍指向目标（穿过墙）→</p>
+<p>在墙边反复尝试无法前进 → <strong>永久卡住</strong>。</p>
+<p>这不是「边界不够强」，是<strong>结构性冲突</strong>：梯度说「往这边走」，边界说「不能走」。</p>
+<h3>3.3 但是对齐的约束几乎无损</h3>
+<p>只在<strong>梯度接近零</strong>的地方放边界（个体本来也不会主动去）：</p>
+<table><thead><tr><th>边界密度</th><th>冲突边界</th><th>对齐边界</th><th>差异</th></tr></thead><tbody><tr><td>1.3%</td><td>0.575</td><td><strong>0.929</strong></td><td>+0.354</td></tr><tr><td>3.9%</td><td>0.346</td><td><strong>0.786</strong></td><td>+0.440</td></tr><tr><td>7.6%</td><td>0.227</td><td><strong>0.786</strong></td><td>+0.560</td></tr></tbody></table>
+<p><strong>同样密度下，对齐边界的性能高 0.35–0.56，且密度越高优势越大。</strong></p>
+<h3>3.4 可操作的设计规则</h3>
+<blockquote><p><strong>加约束前，先检查该处的信号梯度强度。</strong></p><p>- 梯度强 → 不要加约束（会冲突，系统卡死）</p><p>- 梯度弱 → 可以加约束（安全，几乎无损）</p></blockquote>
+<p><strong>真实系统对应</strong>：调度器说「往 A 扩容」时，不要设置阻止扩容的配额。</p>
+<p>只有在「没有明确方向」的地方才用规则约束。</p>
+<hr>
+<h2>四、定律三：密度</h2>
+<blockquote><p><strong>通信受限时，扩大规模会让系统变差；存在一个最优规模。</strong></p></blockquote>
+<h3>4.1 实验设计</h3>
+<p>蜂群攻击场景：80 架无人机、20 个目标、战场 200×200、无指挥所。</p>
+<p>无人机通过有限信道的共享标记协调（发现目标→写标记→其他无人机跟随）。</p>
+<h3>4.2 通信容量决定覆盖率</h3>
+<table><thead><tr><th>信道数</th><th>覆盖率</th><th>达 50% 用时</th></tr></thead><tbody><tr><td>1</td><td>21.2% ± 6.9</td><td>未达成</td></tr><tr><td>2</td><td>30.6% ± 9.4</td><td>未达成</td></tr><tr><td>4</td><td>36.9% ± 9.2</td><td>1945</td></tr><tr><td>10</td><td>58.8% ± 10.9</td><td>1392</td></tr><tr><td><strong>20</strong></td><td><strong>68.8% ± 8.3</strong></td><td><strong>1057</strong></td></tr><tr><td>40</td><td>68.8%（饱和）</td><td>1057</td></tr></tbody></table>
+<p>信道 1→20 提升 <strong>47.5 个百分点</strong>；<strong>≥ 目标数（20）后完全饱和</strong>。</p>
+<h3>4.3 规模反噬</h3>
+<table><thead><tr><th>蜂群规模</th><th>1 信道（瓶颈）</th><th>20 信道（充足）</th></tr></thead><tbody><tr><td>10</td><td>10.0% ± 3.8</td><td>21.9% ± 5.9</td></tr><tr><td>20</td><td>14.4% ± 9.4</td><td>36.2% ± 7.9</td></tr><tr><td>40</td><td><strong>21.2%</strong> ± 6.9</td><td>68.8% ± 8.3</td></tr><tr><td>80</td><td>16.9% ± 6.5</td><td>91.9% ± 5.3</td></tr><tr><td>160</td><td>15.0% ± 6.0</td><td><strong>100%</strong></td></tr><tr><td>320</td><td><strong>10.0%</strong> ± 3.8</td><td><strong>100%</strong></td></tr></tbody></table>
+<p><strong>通信充足时，无人机越多越好（160 架就 100% 覆盖）。</strong></p>
+<p><strong>通信瓶颈时，40 架最好，加到 320 架反而掉到 10%。</strong></p>
+<p>机制：信道不足 → 多个目标抢同一信道 → 信道归属被最后一个发现者覆盖 →</p>
+<p><strong>所有无人机被导向同一个目标</strong> → 规模越大扎堆越严重。</p>
+<blockquote><p><strong>「更多无人机 = 更强蜂群」这个直觉是错的。</strong></p></blockquote>
+<h3>4.4 指挥所的价值取决于通信质量</h3>
+<table><thead><tr><th>信道数</th><th>有指挥所</th><th>无指挥所</th><th>损失</th></tr></thead><tbody><tr><td>1</td><td>100.0%</td><td>21.2%</td><td><strong>-78.8pp</strong></td></tr><tr><td>10</td><td>100.0%</td><td>58.8%</td><td>-41.2pp</td></tr><tr><td>20</td><td>100.0%</td><td>68.8%</td><td><strong>-31.2pp</strong></td></tr></tbody></table>
+<p><strong>通信越差，指挥所越不可替代。</strong> 反过来：通信够好，去中心化就够了。</p>
+<hr>
+<h2>五、定律四：污染</h2>
+<blockquote><p><strong>伪造信息比删除信息更致命。而只有能区分真假的防御才有效。</strong></p></blockquote>
+<h3>5.1 四种攻击的分类学</h3>
+<p>当攻击者能写入协调介质时，有四种攻击方式：</p>
+<table><thead><tr><th>攻击</th><th>机制</th><th>本质</th></tr></thead><tbody><tr><td><strong>拒绝</strong> Denial</td><td>压制信道</td><td><strong>删除</strong>信息</td></tr><tr><td><strong>注入</strong> Injection</td><td>随机位置写假标记</td><td><strong>伪造</strong>信息</td></tr><tr><td><strong>重放</strong> Replay</td><td>已摧毁/虚假位置重写</td><td><strong>伪造过期真相</strong></td></tr><tr><td><strong>淹没</strong> Flooding</td><td>高频随机噪声</td><td><strong>稀释</strong>信息</td></tr></tbody></table>
+<h3>5.2 结果（基准 85.5%，等预算对比）</h3>
+<table><thead><tr><th>攻击</th><th>覆盖率</th><th>损失</th></tr></thead><tbody><tr><td><strong>注入</strong>（2 标记/tick）</td><td>42.0% ± 10.6</td><td><strong>-43.5pp</strong></td></tr><tr><td><strong>淹没</strong>（2 标记/tick）</td><td>40.5% ± 20.3</td><td><strong>-45.0pp</strong></td></tr><tr><td>拒绝（压制 50% 信道）</td><td>61.0% ± 9.9</td><td>-24.5pp</td></tr><tr><td>重放（时间对齐）</td><td>72.0% ± 8.2</td><td>-13.5pp</td></tr></tbody></table>
+<p><strong>伪造/稀释信息的伤害是删除的 1.7–1.8 倍。</strong></p>
+<p>机制：</p>
+<ul>
+<li><strong>删除</strong> → 无人机失去引导，退化为随机搜索。低效，但<strong>不会主动犯错</strong></li>
+<li><strong>伪造</strong> → 无人机被主动引向错误位置，<strong>付出真实的飞行和弹药成本</strong></li>
+</ul>
+<h3>5.3 一个被推翻的假设</h3>
+<p>初版测出重放只有 -11.5pp。我假设是<strong>时间混淆</strong>（重放要等目标被摧毁才有诱饵）。</p>
+<p>做了时间对齐实验（预设幽灵位置，tick 0 生效）：<strong>只改善 2 个百分点。</strong></p>
+<p><strong>假设错了。</strong> 真正的机制是<strong>诱饵分布</strong>：</p>
+<blockquote><p>固定位置的诱饵只能捕获经过附近的无人机；</p><p>随机分布的诱饵能捕获任何位置的无人机。</p></blockquote>
+<p><strong>工程含义</strong>：防御重放只需校验少数已知位置；防御随机注入需要全通道认证——</p>
+<p><strong>后者成本高得多</strong>。</p>
+<h3>5.4 防御评估：便宜防御比攻击更贵</h3>
+<table><thead><tr><th>防御</th><th>攻击下收益</th><th>无攻击时代价</th><th>净效果</th></tr></thead><tbody><tr><td><strong>溯源认证</strong></td><td><strong>+45.0pp（恢复 100%）</strong></td><td>0</td><td><strong>压倒性正</strong></td></tr><tr><td>快速衰减 0.99</td><td>+1.9pp（恢复 4%）</td><td>-1.9pp</td><td>≈0</td></tr><tr><td><strong>快速衰减 0.95</strong></td><td><strong>+3.1pp（恢复 7%）</strong></td><td><strong>-33.8pp</strong></td><td><strong>净损 27pp</strong></td></tr><tr><td>快速衰减 0.90</td><td>+1.9pp（恢复 4%）</td><td>-40.0pp</td><td>严重负</td></tr></tbody></table>
+<p><strong>「缩短标记寿命」这种显然的抗攻击手段，净损失 27 个百分点。</strong></p>
+<p>原因：真假标记共用同一个衰减通道。削弱假标记的同时也破坏真标记——</p>
+<p>而真标记需要活得足够长（无人机跨场要 200 tick）。</p>
+<h3>5.5 跨域验证：多智能体共享记忆</h3>
+<p><strong>为什么能跨域</strong>：当前主流的多智能体 LLM 架构里，agent 通过共享记忆/消息板协作</p>
+<p>（完成子任务→写「我做完了」→其他 agent 读到后跳过）。这和蜂群的标记场结构完全相同。</p>
+<p>攻击模型：被劫持的 agent 往共享记忆写<strong>假完成记录</strong>。</p>
+<p>20 agent / 40 任务，基线 100%：</p>
+<table><thead><tr><th>被劫持 agent</th><th>完成率</th><th>损失</th><th>假记录数</th></tr></thead><tbody><tr><td>0 / 20</td><td>100.0%</td><td>—</td><td>0</td></tr><tr><td>1 / 20</td><td>78.8% ± 1.8</td><td>-21.3pp</td><td>1,500</td></tr><tr><td>2 / 20</td><td>66.2% ± 3.4</td><td>-33.8pp</td><td>3,000</td></tr><tr><td><strong>3 / 20（15%）</strong></td><td><strong>56.5% ± 3.9</strong></td><td><strong>-43.5pp</strong></td><td>4,500</td></tr><tr><td>5 / 20</td><td>40.5% ± 4.0</td><td>-59.5pp</td><td>7,500</td></tr><tr><td>8 / 20（40%）</td><td>25.0% ± 3.3</td><td>-75.0pp</td><td>12,000</td></tr></tbody></table>
+<p><strong>15% 的 agent 被劫持，系统损失 43.5 个百分点。</strong></p>
+<p>防御：</p>
+<table><thead><tr><th>防御</th><th>完成率</th><th>恢复</th><th>无攻击代价</th></tr></thead><tbody><tr><td>无防御</td><td>56.5% ± 3.9</td><td>—</td><td>—</td></tr><tr><td><strong>溯源认证</strong></td><td><strong>100.0%</strong></td><td><strong>100%</strong></td><td><strong>0</strong></td></tr><tr><td>交叉验证（3 源）</td><td>95.7% ± 2.1</td><td>90%</td><td>0</td></tr></tbody></table>
+<h3>5.6 统一规律</h3>
+<p>把两个系统的防御结果放在一起：</p>
+<table><thead><tr><th>防御类型</th><th>蜂群</th><th>多智能体</th><th>无攻击代价</th></tr></thead><tbody><tr><td><strong>溯源认证</strong>（区分真假）</td><td>恢复 <strong>100%</strong></td><td>恢复 <strong>100%</strong></td><td><strong>0</strong></td></tr><tr><td>交叉验证（区分真假）</td><td>未测</td><td>恢复 90%</td><td>0</td></tr><tr><td><strong>快速衰减</strong>（削弱一切）</td><td><strong>净损 27pp</strong></td><td>—</td><td>—</td></tr></tbody></table>
+<blockquote><p><strong>防御是否有效，取决于它能否区分真假信号，而不是它削弱了多少信号。</strong></p></blockquote>
+<hr>
+<h2>六、一个反向的对照：分布式调度里 HA 抹平了优势</h2>
+<p>在把「无中心」当卖点时，我做过一个分布式调度的对照实验。</p>
+<p>初版结果看起来很好：无中心方案在中心失效后<strong>领先 42 个百分点</strong>。</p>
+<p>但那是<strong>对着稻草人测的</strong>——对照组是单点、无备份的中心。</p>
+<p>加入真实的 HA control plane（3 副本 + 选主）后：</p>
+<table><thead><tr><th>配置</th><th>完成率</th><th>说明</th></tr></thead><tbody><tr><td>去中心化（无故障）</td><td>95.6%</td><td>基线</td></tr><tr><td><strong>去中心化（中心失效）</strong></td><td><strong>95.6%</strong></td><td>不受影响</td></tr><tr><td>中心化单副本（无故障）</td><td>87.5%</td><td>基线</td></tr><tr><td>中心化单副本（中心失效）</td><td><strong>51.4%</strong></td><td>停止调度</td></tr><tr><td>中心化 3 副本 HA（无故障）</td><td>87.5%</td><td>基线</td></tr><tr><td><strong>中心化 3 副本 HA（leader 失效）</strong></td><td><strong>87.3%</strong></td><td>选举后恢复</td></tr></tbody></table>
+<p><strong>HA 几乎完全抹平了故障韧性差距。公平的差距是 +8.3pp，不是 +42pp。</strong></p>
+<p><strong>这一节的教训和方法论价值大于结论本身</strong>：任何「某方案在某维度更优」的结论，</p>
+<p>必须先确认对照组是<strong>强的</strong>，不是随意搭的。</p>
+<hr>
+<h2>七、方法论反思：我在这个项目里犯的错</h2>
+<p>这一节记录模型缺陷如何伪装成科学结论。它们是研究过程的一部分。</p>
+<h3>7.1 缺陷伪装成结论的案例</h3>
+<table><thead><tr><th>现象</th><th>初步结论</th><th>真实原因</th></tr></thead><tbody><tr><td>三种塑造方法都 100% 完成</td><td>「任务很简单」</td><td>资源在窗口内直接可见，个体不需要记忆</td></tr><tr><td>信道数完全不影响结果</td><td>「信道不重要」</td><td>标记衰减半衰期 14 tick，无人机跨场要 200 tick，标记先死了</td></tr><tr><td>边界条件 0% 改善</td><td>「约束无效」</td><td>边界阻挡了 94.5% 的格子，个体一开始就被冻住</td></tr><tr><td>三条攻击曲线完美重合</td><td>「这些攻击无效」</td><td>防御字段默认值是 1.0，所有攻击被拦截</td></tr><tr><td>淹没是最强攻击</td><td>「噪声破坏力最大」</td><td>我给淹没分配了 4 倍预算</td></tr><tr><td>无中心领先 42pp</td><td>「无中心更抗故障」</td><td>对照组是单点无备份，不是真实 HA</td></tr></tbody></table>
+<h3>7.2 三条可复用的检查</h3>
+<p><strong>检查 1：参数的时间尺度必须匹配现象。</strong></p>
+<p>标记寿命 &lt; 飞行时间 → 标记无效。这类错误不会报错，只会给出「无效应」的假结论。</p>
+<p><strong>检查 2：失败模式必须有代价。</strong></p>
+<p>初版让无人机「就近攻击」，走到哪里都能顺手打一个，</p>
+<p>于是「跑错地方」免费——协调失败不可见。改成承诺式攻击后才测出差异。</p>
+<p><strong>检查 3：分类学实验必须等预算归一化。</strong></p>
+<p>给一种攻击 4 倍预算，它自然看起来最强。所有对比都必须在同等资源下进行。</p>
+<h3>7.3 一句话</h3>
+<blockquote><p><strong>第一次扫描结果平坦时，第一反应应该是「我的模型制造出想要的现象了吗」，</strong></p><p><strong>而不是「假设被证伪」。</strong></p></blockquote>
+<p>这个项目里，<strong>五次</strong>平坦结果中有<strong>四次</strong>是模型缺陷。</p>
+<hr>
+<h2>八、边界与局限</h2>
+<p>诚实地列出这套结论不覆盖的地方。</p>
+<h3>8.1 建模层面的局限</h3>
+<table><thead><tr><th>局限</th><th>影响</th></tr></thead><tbody><tr><td>网络延迟是<strong>离散 tick 模型</strong>，不是连续时间</td><td>真实系统的时序特性未覆盖</td></tr><tr><td>丢包用确定性哈希模拟</td><td>无真实网络抖动</td></tr><tr><td>标记场是「归属覆盖」，无真实信号叠加</td><td>干扰的物理过程被简化</td></tr><tr><td>目标静止</td><td>侦察信息不会过期</td></tr><tr><td>无时钟同步</td><td>时序协调（压制+突击同步）未建模</td></tr><tr><td>多智能体用<strong>规则 agent</strong>，不是真 LLM</td><td>验证的是结构，不是 LLM 行为</td></tr></tbody></table>
+<h3>8.2 理论层面的局限</h3>
+<ul>
+<li>四条定律都是<strong>实验规律</strong>，不是定理。没有给出解析形式。</li>
+<li>容量阈值（如「通道数 ≥ 目标数」）是否普适，只在一个任务里验证过。</li>
+<li>「密度反噬」的最优点位置（40 架）依赖具体参数，没有归一化公式。</li>
+</ul>
+<h3>8.3 未触碰的问题</h3>
+<p>研究纲要里列过三个结构性缺陷，本项目<strong>一个都没解决</strong>：</p>
+<table><thead><tr><th>缺陷</th><th>状态</th></tr></thead><tbody><tr><td><strong>长程规划</strong></td><td>纯反应式系统没有「未来」变量，未建模</td></tr><tr><td><strong>信用分配</strong></td><td>无法归因个体贡献，未处理</td></tr><tr><td><strong>对抗性博弈</strong></td><td>攻击者与防御者都是固定策略，无学习</td></tr></tbody></table>
+<hr>
+<h2>九、应用含义</h2>
+<h3>9.1 四条可直接使用的规则</h3>
+<table><thead><tr><th>场景</th><th>规则</th><th>依据</th></tr></thead><tbody><tr><td>系统设计</td><td>先投资介质容量，再投资节点智能</td><td>定律一（d=3.26 vs -0.84）</td></tr><tr><td>策略配置</td><td>约束前先看信号梯度，梯度强处不加约束</td><td>定律二（-77% 崩塌）</td></tr><tr><td>规模规划</td><td>通信受限时不要扩容，先扩信道</td><td>定律三（320 架 10%）</td></tr><tr><td>安全设计</td><td>优先做溯源认证，不要用「普遍削弱」式防御</td><td>定律四（认证恢复 100%，衰减净损 27pp）</td></tr></tbody></table>
+<h3>9.2 四条定律的适用边界</h3>
+<p>这些结论适用于：</p>
+<ul>
+<li>个体只感知局部</li>
+<li>协调靠共享介质</li>
+<li>个体规则不可任意修改</li>
+</ul>
+<p>不适用于：</p>
+<ul>
+<li>有中心调度且中心可靠</li>
+<li>需要长程规划</li>
+<li>强对抗博弈（双方会学习）</li>
+</ul>
+<hr>
+<h2>十、复现</h2>
+<pre><code>git clone &lt;repo&gt;
+cd rust
+cargo build --release</code></pre>
+<pre><code># 定律一：容量
+./target/release/swarm_exp        # 蜂群版本
+# 完整 H2 实验见 Python 版 scripts/run_h2.py</code></pre>
+<pre><code># 定律二：对齐
+./target/release/shi syssim</code></pre>
+<pre><code># 定律三：密度
+./target/release/swarm_exp</code></pre>
+<pre><code># 定律四：污染
+./target/release/swarm_attack     # 分类学 + 防御
+./target/release/swarm_fair       # 等预算对比
+./target/release/swarm_taxonomy   # 时间对齐
+./target/release/multimem_exp     # 跨域验证</code></pre>
+<pre><code># 交互式演示（双击打开）
+demo/index.html</code></pre>
+<hr>
+<h2>十一、未解决的问题</h2>
+<p>如果继续，这些问题更值得投入：</p>
+<ol>
+<li><strong>四条定律的解析形式</strong>。现在全是实验曲线，没有公式。</li>
+</ol>
+<p>   容量阈值能否用任务结构（类型数、目标数）推导出来？</p>
+<ol>
+<li><strong>真实 LLM 验证</strong>。multimem 用的是规则 agent。</li>
+</ol>
+<p>   把决策函数换成 LLM 调用即可验证，但需要 API 预算。</p>
+<ol>
+<li><strong>对抗性博弈</strong>。攻击者和防御者目前都是固定策略。</li>
+</ol>
+<p>   如果攻击者能学习（选择最优攻击类型与强度），结论会怎么变？</p>
+<ol>
+<li><strong>时序协调</strong>。压制与突击同步是无中心系统的硬约束，本项目完全没碰。</li>
+</ol>
+<ol>
+<li><strong>从仿真到真实系统</strong>。所有结论都在仿真里。真实蜂群/集群的验证需要硬件。</li>
+</ol>
+<hr>
+<h2>十二、结语</h2>
+<p>这个项目最初的问题是「为什么没有完全公平的大战场沙盘游戏」和</p>
+<p>「昆虫没有脑子为什么能协作」。</p>
+<p>一年实验下来，这两个问题收敛成同一件事：</p>
+<blockquote><p><strong>一个系统能达到什么，取决于它的组成部分之间能共享多少真实信息——</strong></p><p><strong>而不取决于每个组成部分有多聪明。</strong></p></blockquote>
+<p>四条定律是这句话在四个维度上的量化：</p>
+<ul>
+<li><strong>容量</strong>：共享多少 → 决定上限</li>
+<li><strong>对齐</strong>：共享的信号和控制是否同向 → 决定能否落地</li>
+<li><strong>密度</strong>：单位介质承载多少 → 决定规模</li>
+<li><strong>污染</strong>：共享的是不是真的 → 决定安全</li>
+</ul>
+<p>而贯穿始终的方法是同一个：<strong>确定性仿真 + 强对照 + 诚实的自我修正</strong>。</p>
+<hr>
+<p><em>本项目所有代码、数据、实验脚本均开源。</em></p>
+<p><em>Rust 约 5000 行，85 个测试，跨机器确定性验证通过。</em></p>
+</div></body></html>
