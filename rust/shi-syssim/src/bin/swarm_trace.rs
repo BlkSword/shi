@@ -56,12 +56,13 @@ fn serialize_frame(s: &Swarm) -> String {
 }
 
 fn main() {
+    // (key, label, jam_from, jam_ratio, decoy_rate)
     let scenarios: Vec<(&str, &str, Option<u64>, f64, f64)> = vec![
-        ("baseline", "无对抗（20 信道）", None, 0.0, 0.0),
-        ("jam", "通信干扰 50%（tick 300 起）", Some(300), 0.5, 0.0),
-        ("decoy", "假标记诱骗 20%", None, 0.0, 0.2),
-        ("both", "干扰 50% + 假标记 20%", Some(300), 0.5, 0.2),
-        ("fewch", "通信瓶颈（仅 2 信道）", None, 0.0, 0.0),
+        ("baseline", "无攻击（20 信道）", None, 0.0, 0.0),
+        ("jam", "拒绝：通信干扰 50%", Some(300), 0.5, 0.0),
+        ("decoy", "注入：假标记诱骗 20%", None, 0.0, 0.2),
+        ("flood", "淹没：高频噪声（8/tick）", None, 0.0, 0.0),
+        ("both", "组合：干扰 + 诱骗", Some(300), 0.5, 0.2),
     ];
 
     let ticks = 1200u64;
@@ -75,7 +76,7 @@ fn main() {
     out.push_str("},\n  \"scenarios\": [\n");
 
     for (idx, (key, label, jam_from, jam_ratio, decoy)) in scenarios.iter().enumerate() {
-        let n_channels = if *key == "fewch" { 2 } else { 20 };
+        let n_channels = 20;
         let cfg = SwarmConfig {
             n_drones: 80,
             n_targets: 20,
@@ -87,6 +88,8 @@ fn main() {
             jam_ratio: *jam_ratio,
             decoy_rate: *decoy,
             decoys_per_tick: if *decoy > 0.0 { 2 } else { 0 },
+            // 淹没场景：每 tick 注入 8 个噪声标记
+            flood_marks: if *key == "flood" { 8 } else { 0 },
             seed: 7,
             ..Default::default()
         };
