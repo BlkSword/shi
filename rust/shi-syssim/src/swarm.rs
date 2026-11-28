@@ -102,6 +102,14 @@ pub struct SwarmConfig {
     pub damage_per_hit: f64,
     /// 目标血量
     pub target_health: f64,
+    /// 干扰：从该 tick 起，被干扰的信道不可用（None = 无干扰）
+    pub jam_from: Option<u64>,
+    /// 干扰的信道比例 [0, 1]。0.5 = 一半信道被压制
+    pub jam_ratio: f64,
+    /// 每 tick 敌方向信道注入假标记的概率 [0, 1)
+    pub decoy_rate: f64,
+    /// 假标记数量（每个 tick 最多注入几个）
+    pub decoys_per_tick: usize,
     pub seed: u64,
 }
 
@@ -118,9 +126,24 @@ impl Default for SwarmConfig {
             drone_speed: 1.0,
             damage_per_hit: 1.0,
             target_health: 3.0,
+            jam_from: None,
+            jam_ratio: 0.0,
+            decoy_rate: 0.0,
+            decoys_per_tick: 0,
             seed: 0,
         }
     }
+}
+
+/// 对抗状态
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct AdversaryStats {
+    /// 被干扰的信道数
+    pub jammed_channels: usize,
+    /// 注入的假标记总数
+    pub decoys_injected: u32,
+    /// 无人机被假标记骗走的次数
+    pub decoy_visits: u32,
 }
 
 /// 蜂群战场
@@ -142,6 +165,12 @@ pub struct Swarm {
     /// - n_channels < n_targets：多个目标抢同一信道，owner 被覆盖，
     ///   跟随者会被引向错误目标 —— 这就是信息容量不足的后果
     pub channel_owner: Vec<Option<usize>>,
+    /// 被干扰的信道（静态确定：按 jam_ratio 选）
+    pub jammed: Vec<bool>,
+    /// 假标记位置（用于统计被骗次数）
+    pub decoy_positions: Vec<(f64, f64)>,
+    /// 对抗统计
+    pub adversary: AdversaryStats,
     rng: Pcg64Mcg,
 }
 
@@ -213,7 +242,45 @@ impl Swarm {
             total_attacks: 0,
             command_dead: false,
             channel_owner: vec![None; n_channels],
+            jammed: vec![false; n_channels],
+            decoy_positions: Vec::new(),
+            adversary: AdversaryStats::default(),
             rng,
+        }
+    }
+
+    /// 判断某个信道当前是否可用（未被干扰）
+    #[inline]
+    fn channel_usable(&self, ch: usize) -> bool {
+        if let Some(from) = self.config.jam_from {
+            if self.tick >= from && self.jammed.get(ch).copied().unwrap_or(false) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// 敌方向信道注入假标记
+    fn inject_decoys(&mut self) {
+        if self.config.decoy_rate <= 0.0 || self.config.decoys_per_tick == 0 {
+            return;
+        }
+        let size = self.config.field_size;
+        for _ in 0..self.config.decoys_per_tick {
+            if self.rng.gen::<f64>() >= self.config.decoy_rate {
+                continue;
+            }
+            let x = self.rng.gen::<f64>() * size;
+            let y = self.rng.gen::<f64>() * size;
+            // 假标记随机占用一个可用信道
+            let ch = self.rng.gen_range(0..self.config.n_channels);
+            if !self.channel_usable(ch) {
+                continue;
+            }
+            // 假标记强度略低于真标记，但足够吸引无人机
+            self.field.deposit(x, y, ch, 35.0);
+            self.decoy_positions.push((x, y));
+            self.adversary.decoys_injected += 1;
         }
     }
 
@@ -232,7 +299,20 @@ impl Swarm {
             }
         }
 
-        // 1. 发现目标：搜索中的无人机靠近目标就标记它
+        // 1. 对抗：干扰生效 + 注入假标记
+        if let Some(from) = self.config.jam_from {
+            if self.tick == from {
+                // 按比例确定被干扰的信道（确定性：取前 k 个）
+                let k = (self.config.n_channels as f64 * self.config.jam_ratio).round() as usize;
+                for ch in 0..k.min(self.config.n_channels) {
+                    self.jammed[ch] = true;
+                }
+                self.adversary.jammed_channels = k.min(self.config.n_channels);
+            }
+        }
+        self.inject_decoys();
+
+        // 2. 发现目标：搜索中的无人机靠近目标就标记它
         self.discover_and_mark();
 
         // 2. 决策：有指挥所时集中分配，没有时跟随标记场
@@ -347,10 +427,13 @@ impl Swarm {
                 }
             }
 
-            // 找最强的信道
+            // 找最强的**可用**信道（被干扰的跳过）
             let mut best_ch = 0;
             let mut best_val = 0.0;
             for ch in 0..self.config.n_channels {
+                if !self.channel_usable(ch) {
+                    continue;
+                }
                 let v = self.field.sense(self.drones[d].x, self.drones[d].y, ch, sense_r, true);
                 if v > best_val {
                     best_val = v;
@@ -395,7 +478,11 @@ impl Swarm {
                 let mut best_ch = 0;
                 let mut best_val = 0.0;
                 for ch in 0..self.config.n_channels {
-                    let v = self.field.sense(self.drones[d].x, self.drones[d].y, ch, sense_r, true);
+                    if !self.channel_usable(ch) {
+                        continue;
+                    }
+                    let v =
+                        self.field.sense(self.drones[d].x, self.drones[d].y, ch, sense_r, true);
                     if v > best_val {
                         best_val = v;
                         best_ch = ch;
@@ -463,6 +550,16 @@ impl Swarm {
                         + (self.targets[t].y - dy).powi(2);
                     if d2 <= ar2 {
                         hit = Some(t);
+                    }
+                }
+            }
+
+            // 若无人机停在某处但附近没有真目标，检查是否被假标记骗了
+            if hit.is_none() && !self.decoy_positions.is_empty() {
+                for &(dx2, dy2) in &self.decoy_positions {
+                    if (dx2 - dx).powi(2) + (dy2 - dy).powi(2) <= ar2 {
+                        self.adversary.decoy_visits += 1;
+                        break;
                     }
                 }
             }

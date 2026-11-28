@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>势 / Shi — 蜂群协调演示</title>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --panel: #121820;
+    --panel-2: #1a2230;
+    --line: #23303f;
+    --fg: #e6edf3;
+    --muted: #7d8fa3;
+    --accent: #22d3ee;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --ok: #10b981;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  header {
+    padding: 14px 22px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: var(--panel);
+  }
+  header h1 { font-size: 17px; font-weight: 600; letter-spacing: .02em; }
+  header h1 span { color: var(--accent); }
+  header .sub { color: var(--muted); font-size: 12.5px; }
+
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 1px;
+    background: var(--line);
+    min-height: 0;
+  }
+  .stage {
+    background: var(--bg);
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+    min-height: 0;
+  }
+  canvas {
+    background: #070a0e;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    max-width: 100%;
+    max-height: 100%;
+  }
+  .hud {
+    position: absolute;
+    top: 30px;
+    left: 30px;
+    display: flex;
+    gap: 8px;
+    font-size: 12px;
+    pointer-events: none;
+  }
+  .chip {
+    background: rgba(18,24,32,.85);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 5px 10px;
+    backdrop-filter: blur(6px);
+  }
+  .chip b { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+  aside {
+    background: var(--panel);
+    padding: 18px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .section-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    color: var(--muted);
+    margin-bottom: 9px;
+  }
+
+  .scenarios { display: flex; flex-direction: column; gap: 6px; }
+  .scen {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: .15s;
+    font-size: 12.5px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+  }
+  .scen:hover { border-color: #35465a; }
+  .scen.active { border-color: var(--accent); background: #10242a; }
+  .scen .cov {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: var(--accent);
+    font-size: 13px;
+  }
+
+  .stats { display: flex; flex-direction: column; gap: 9px; }
+  .stat { display: flex; justify-content: space-between; font-size: 12.5px; }
+  .stat .k { color: var(--muted); }
+  .stat .v { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+  .bar-wrap {
+    height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin-top: 4px;
+  }
+  .bar { height: 100%; background: var(--accent); width: 0%; transition: width .1s linear; }
+  .bar.danger { background: var(--danger); }
+
+  .legend { display: flex; flex-direction: column; gap: 7px; font-size: 12px; }
+  .legend div { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .sq { width: 9px; height: 9px; flex-shrink: 0; }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--panel);
+    padding: 12px 22px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  button {
+    background: var(--panel-2);
+    color: var(--fg);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 7px 15px;
+    font-size: 13px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: .15s;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.primary { background: #10242a; border-color: var(--accent); color: var(--accent); }
+  input[type=range] {
+    flex: 1;
+    accent-color: var(--accent);
+    height: 4px;
+  }
+  .ticklabel {
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+    font-size: 12.5px;
+    min-width: 110px;
+    text-align: right;
+  }
+  .speed { display: flex; gap: 4px; }
+  .speed button { padding: 5px 10px; font-size: 12px; }
+  .speed button.active { border-color: var(--accent); color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>势 / Shi <span>·</span> 蜂群协调演示</h1>
+  <div class="sub">指挥所失效后的无中心自主攻击 · 有限信道共享标记</div>
+</header>
+
+<main>
+  <div class="stage">
+    <canvas id="cv" width="900" height="900"></canvas>
+    <div class="hud">
+      <div class="chip">tick <b id="hud-tick">0</b></div>
+      <div class="chip">覆盖率 <b id="hud-cov">0%</b></div>
+      <div class="chip">攻击 <b id="hud-atk">0</b></div>
+      <div class="chip" id="hud-jam" style="display:none">压制信道 <b id="hud-jamn">0</b></div>
+    </div>
+  </div>
+
+  <aside>
+    <div>
+      <div class="section-title">场景</div>
+      <div class="scenarios" id="scenarios"></div>
+    </div>
+
+    <div>
+      <div class="section-title">当前指标</div>
+      <div class="stats">
+        <div class="stat"><span class="k">目标覆盖率</span><span class="v" id="s-cov">0%</span></div>
+        <div class="bar-wrap"><div class="bar" id="s-cov-bar"></div></div>
+        <div class="stat" style="margin-top:6px"><span class="k">累计攻击</span><span class="v" id="s-atk">0</span></div>
+        <div class="stat"><span class="k">被骗次数</span><span class="v" id="s-decoy">0</span></div>
+        <div class="stat"><span class="k">活跃无人机</span><span class="v" id="s-alive">0</span></div>
+        <div class="stat"><span class="k">已摧毁目标</span><span class="v" id="s-destroyed">0</span></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">图例</div>
+      <div class="legend">
+        <div><span class="dot" style="background:#64748b"></span>搜索中</div>
+        <div><span class="dot" style="background:#22d3ee"></span>攻击中</div>
+        <div><span class="sq" style="background:#ef4444"></span>目标（未受损）</div>
+        <div><span class="sq" style="background:#f59e0b"></span>目标（受损）</div>
+        <div><span class="sq" style="background:#1e293b;border:1px solid #334155"></span>目标（已摧毁）</div>
+        <div><span style="color:#ef4444;font-weight:700">×</span>&nbsp;敌方假标记</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">核心结论</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.65">
+        通信是瓶颈时，<b style="color:var(--warn)">加无人机反而更差</b>：<br>
+        1 信道下 40 架覆盖 21%，320 架只剩 10%。<br><br>
+        假标记比干扰更致命：<br>
+        干扰 50% 损失 28pp，假标记 20% 损失 45pp。
+      </div>
+    </div>
+  </aside>
+</main>
+
+<footer>
+  <button class="primary" id="btn-play">▶ 播放</button>
+  <button id="btn-reset">⟲ 重置</button>
+  <input type="range" id="scrub" min="0" max="100" value="0">
+  <div class="ticklabel" id="ticklabel">tick 0 / 1200</div>
+  <div class="speed" id="speed">
+    <button data-s="0.5">0.5×</button>
+    <button data-s="1" class="active">1×</button>
+    <button data-s="2">2×</button>
+    <button data-s="4">4×</button>
+  </div>
+</footer>
+
+<script src="demo_data.js"></script>
+<script>
+(function () {
+  const DATA = window.DEMO_DATA;
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const FIELD = DATA.config.fieldSize;
+
+  let scenarioIdx = 0;
+  let frame = 0;
+  let playing = false;
+  let speed = 1;
+
+  const el = (id) => document.getElementById(id);
+
+  // ---- 场景按钮 ----
+  const scenBox = el('scenarios');
+  DATA.scenarios.forEach((sc, i) => {
+    const div = document.createElement('div');
+    div.className = 'scen' + (i === 0 ? ' active' : '');
+    div.innerHTML = '<span>' + sc.label + '</span><span class="cov">' +
+      (sc.finalCoverage * 100).toFixed(1) + '%</span>';
+    div.onclick = () => { scenarioIdx = i; frame = 0; updateScenUI(); draw(); };
+    scenBox.appendChild(div);
+  });
+
+  function updateScenUI() {
+    [...scenBox.children].forEach((c, i) =>
+      c.classList.toggle('active', i === scenarioIdx));
+  }
+
+  // ---- 渲染 ----
+  const W = cv.width, H = cv.height;
+  const scale = W / FIELD;
+
+  function draw() {
+    const sc = DATA.scenarios[scenarioIdx];
+    const f = sc.frames[Math.min(frame, sc.frames.length - 1)];
+    if (!f) return;
+
+    ctx.fillStyle = '#070a0e';
+    ctx.fillRect(0, 0, W, H);
+
+    // 网格
+    ctx.strokeStyle = '#0f1620';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 10; i++) {
+      const p = (W / 10) * i;
+      ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, H); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(W, p); ctx.stroke();
+    }
+
+    // 假标记
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = 2.5;
+    for (const [x, y] of f.y) {
+      const px = x * scale, py = y * scale, s = 5;
+      ctx.beginPath();
+      ctx.moveTo(px - s, py - s); ctx.lineTo(px + s, py + s);
+      ctx.moveTo(px + s, py - s); ctx.lineTo(px - s, py + s);
+      ctx.stroke();
+    }
+
+    // 目标
+    for (const [x, y, hp, dead, disc] of f.g) {
+      const px = x * scale, py = y * scale, s = 7;
+      if (dead) {
+        ctx.fillStyle = '#1e293b';
+        ctx.strokeStyle = '#334155';
+      } else if (hp > 0.67) {
+        ctx.fillStyle = '#ef4444';
+        ctx.strokeStyle = '#fca5a5';
+      } else {
+        ctx.fillStyle = '#f59e0b';
+        ctx.strokeStyle = '#fcd34d';
+      }
+      ctx.lineWidth = disc ? 2 : 1;
+      ctx.beginPath();
+      ctx.rect(px - s, py - s, s * 2, s * 2);
+      ctx.fill(); ctx.stroke();
+    }
+
+    // 无人机
+    for (const [x, y, st] of f.d) {
+      if (st === 2) continue; // 已损毁不画
+      const px = x * scale, py = y * scale;
+      ctx.fillStyle = st === 1 ? '#22d3ee' : '#64748b';
+      ctx.beginPath();
+      ctx.arc(px, py, 2.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // HUD
+    const alive = f.d.filter(d => d[2] !== 2).length;
+    const destroyed = f.g.filter(g => g[3] === 1).length;
+    el('hud-tick').textContent = f.t;
+    el('hud-cov').textContent = (f.cov * 100).toFixed(0) + '%';
+    el('hud-atk').textContent = f.atk;
+    if (f.jam > 0) {
+      el('hud-jam').style.display = '';
+      el('hud-jamn').textContent = f.jam;
+    } else {
+      el('hud-jam').style.display = 'none';
+    }
+
+    el('s-cov').textContent = (f.cov * 100).toFixed(1) + '%';
+    el('s-cov-bar').style.width = (f.cov * 100) + '%';
+    el('s-atk').textContent = f.atk;
+    el('s-decoy').textContent = f.decoy;
+    el('s-alive').textContent = alive;
+    el('s-destroyed').textContent = destroyed + ' / ' + f.g.length;
+
+    el('scrub').max = sc.frames.length - 1;
+    el('scrub').value = frame;
+    el('ticklabel').textContent = 'tick ' + f.t + ' / ' + DATA.config.ticks;
+  }
+
+  // ---- 播放控制 ----
+  let last = 0;
+  function loop(ts) {
+    if (playing) {
+      const dt = ts - last;
+      const step = 1000 / (20 * speed);
+      if (dt > step) {
+        last = ts;
+        const sc = DATA.scenarios[scenarioIdx];
+        frame += 1;
+        if (frame >= sc.frames.length) {
+          frame = sc.frames.length - 1;
+          playing = false;
+          el('btn-play').textContent = '▶ 播放';
+        }
+        draw();
+      }
+    }
+    requestAnimationFrame(loop);
+  }
+
+  el('btn-play').onclick = () => {
+    playing = !playing;
+    el('btn-play').textContent = playing ? '❚❚ 暂停' : '▶ 播放';
+    if (playing) {
+      const sc = DATA.scenarios[scenarioIdx];
+      if (frame >= sc.frames.length - 1) frame = 0;
+    }
+  };
+
+  el('btn-reset').onclick = () => {
+    frame = 0; playing = false;
+    el('btn-play').textContent = '▶ 播放';
+    draw();
+  };
+
+  el('scrub').oninput = (e) => {
+    frame = +e.target.value;
+    draw();
+  };
+
+  el('speed').onclick = (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    speed = +b.dataset.s;
+    [...el('speed').children].forEach(x => x.classList.toggle('active', x === b));
+  };
+
+  updateScenUI();
+  draw();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
