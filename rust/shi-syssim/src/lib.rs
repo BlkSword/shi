@@ -23,6 +23,7 @@ pub mod experiment;
 pub mod gossip;
 pub mod ha_control;
 pub mod network;
+pub mod swarm;
 pub mod task;
 
 pub use cluster::{Cluster, ClusterConfig, NodeState};
@@ -31,6 +32,7 @@ pub use experiment::{run, ExpConfig};
 pub use gossip::{GossipConfig, GossipView};
 pub use ha_control::{HaConfig, HaControlPlane, ReplicaState};
 pub use network::{Network, NetworkConfig, Partition};
+pub use swarm::{Drone, DroneState, Swarm, SwarmConfig, Target};
 pub use task::{Task, TaskConfig};
 
 /// 仿真结果
