@@ -110,6 +110,21 @@ pub struct SwarmConfig {
     pub decoy_rate: f64,
     /// 假标记数量（每个 tick 最多注入几个）
     pub decoys_per_tick: usize,
+
+    // ===== 四种攻击（协调通道污染分类学）=====
+    /// 【重放】每当有目标被摧毁，以该概率在原地重新注入标记
+    /// 无人机被引向已经空无一物的位置
+    pub replay_rate: f64,
+    /// 【淹没】每 tick 注入的随机噪声标记数（铺满全场，破坏信噪比）
+    pub flood_marks: usize,
+
+    // ===== 防御 =====
+    /// 【信源认证】真实标记中被认证的比例 [0,1]
+    /// 1.0 = 完美认证（敌方标记被全部拒绝）
+    pub auth_ratio: f64,
+    /// 【时间衰减】标记衰减率覆盖（None = 用默认 0.998）
+    /// 值越小，标记死得越快，假标记残留时间越短
+    pub mark_decay: Option<f64>,
     pub seed: u64,
 }
 
@@ -130,6 +145,11 @@ impl Default for SwarmConfig {
             jam_ratio: 0.0,
             decoy_rate: 0.0,
             decoys_per_tick: 0,
+            replay_rate: 0.0,
+            flood_marks: 0,
+            // 默认无认证：攻击默认生效，只有显式设为 1.0 才启用完美认证
+            auth_ratio: 0.0,
+            mark_decay: None,
             seed: 0,
         }
     }
@@ -144,6 +164,12 @@ pub struct AdversaryStats {
     pub decoys_injected: u32,
     /// 无人机被假标记骗走的次数
     pub decoy_visits: u32,
+    /// 【重放】重放标记次数
+    pub replays: u32,
+    /// 【淹没】注入的噪声标记数
+    pub floods: u32,
+    /// 被拒绝的敌方标记数（认证防御生效）
+    pub rejected_marks: u32,
 }
 
 /// 蜂群战场
@@ -169,6 +195,8 @@ pub struct Swarm {
     pub jammed: Vec<bool>,
     /// 假标记位置（用于统计被骗次数）
     pub decoy_positions: Vec<(f64, f64)>,
+    /// 【重放】已被摧毁的目标位置（攻击者会在这里重放标记）
+    pub dead_target_positions: Vec<(f64, f64)>,
     /// 对抗统计
     pub adversary: AdversaryStats,
     rng: Pcg64Mcg,
@@ -227,8 +255,9 @@ impl Swarm {
         let n_channels = config.n_channels;
         // 标记不扩散（diffusion = 0）：点标记的梯度靠中心差分就够，
         // 而扩散的代价是 O(格数 × 通道数)，多通道时是主要瓶颈。
+        let decay = config.mark_decay.unwrap_or(0.998);
         let channels: Vec<ChannelSpec> = (0..n_channels)
-            .map(|_| ChannelSpec::new(0.998, 0.0))
+            .map(|_| ChannelSpec::new(decay, 0.0))
             .collect();
         let side = (size as usize).max(50);
         let field = PheromoneField::new(side, side, channels);
@@ -244,9 +273,19 @@ impl Swarm {
             channel_owner: vec![None; n_channels],
             jammed: vec![false; n_channels],
             decoy_positions: Vec::new(),
+            dead_target_positions: Vec::new(),
             adversary: AdversaryStats::default(),
             rng,
         }
+    }
+
+    /// 目标索引 → 信道索引（可能冲突）
+    ///
+    /// 这是信息容量约束的直接体现：
+    /// n_channels < n_targets 时，多个目标共用同一信道。
+    #[inline]
+    fn target_channel(&self, target_id: usize) -> usize {
+        target_id % self.config.n_channels
     }
 
     /// 判断某个信道当前是否可用（未被干扰）
@@ -260,34 +299,82 @@ impl Swarm {
         true
     }
 
-    /// 敌方向信道注入假标记
+    /// 敌方对协调通道的攻击
+    ///
+    /// 四种攻击
+    /// --------
+    /// 1. **拒绝（干扰）**：压制信道，无人机收不到任何信号
+    /// 2. **注入（假标记）**：在空地写标记，把无人机骗过去
+    /// 3. **重放**：在已摧毁目标的位置持续重写标记，引诱无人机扑空
+    /// 4. **淹没**：高频写随机噪声，破坏全场信噪比
+    ///
+    /// 关键区别
+    /// --------
+    /// - 拒绝 = **删除**信息（无人机退化为随机搜索）
+    /// - 注入/重放 = **伪造**信息（无人机主动犯错，付真实成本）
+    /// - 淹没 = **稀释**信息（真信号被噪声淹没，梯度失效）
     fn inject_decoys(&mut self) {
-        if self.config.decoy_rate <= 0.0 || self.config.decoys_per_tick == 0 {
+        let size = self.config.field_size;
+        let n_ch = self.config.n_channels;
+
+        // 认证防御：auth_ratio = 1.0 表示敌方无法写入（全部被拒）
+        if self.config.auth_ratio >= 1.0 && (self.config.decoy_rate > 0.0
+            || self.config.replay_rate > 0.0
+            || self.config.flood_marks > 0)
+        {
+            self.adversary.rejected_marks += 1;
             return;
         }
-        let size = self.config.field_size;
-        for _ in 0..self.config.decoys_per_tick {
-            if self.rng.gen::<f64>() >= self.config.decoy_rate {
-                continue;
-            }
-            let x = self.rng.gen::<f64>() * size;
-            let y = self.rng.gen::<f64>() * size;
-            // 假标记随机占用一个可用信道
-            let ch = self.rng.gen_range(0..self.config.n_channels);
-            if !self.channel_usable(ch) {
-                continue;
-            }
-            // 假标记强度略低于真标记，但足够吸引无人机
-            self.field.deposit(x, y, ch, 35.0);
-            self.decoy_positions.push((x, y));
-            self.adversary.decoys_injected += 1;
-        }
-    }
 
-    /// 目标索引 → 信道索引（可能冲突）
-    #[inline]
-    fn target_channel(&self, target_id: usize) -> usize {
-        target_id % self.config.n_channels
+        // ---- 注入：随机位置写假标记 ----
+        if self.config.decoy_rate > 0.0 && self.config.decoys_per_tick > 0 {
+            for _ in 0..self.config.decoys_per_tick {
+                if self.rng.gen::<f64>() >= self.config.decoy_rate {
+                    continue;
+                }
+                let x = self.rng.gen::<f64>() * size;
+                let y = self.rng.gen::<f64>() * size;
+                let ch = self.rng.gen_range(0..n_ch);
+                if !self.channel_usable(ch) {
+                    continue;
+                }
+                self.field.deposit(x, y, ch, 35.0);
+                self.decoy_positions.push((x, y));
+                self.adversary.decoys_injected += 1;
+            }
+        }
+
+        // ---- 重放：在已摧毁目标的位置重新写标记 ----
+        if self.config.replay_rate > 0.0 && !self.dead_target_positions.is_empty() {
+            let n_dead = self.dead_target_positions.len();
+            for k in 0..n_dead {
+                if self.rng.gen::<f64>() >= self.config.replay_rate {
+                    continue;
+                }
+                let (x, y) = self.dead_target_positions[k];
+                let ch = self.rng.gen_range(0..n_ch);
+                if !self.channel_usable(ch) {
+                    continue;
+                }
+                self.field.deposit(x, y, ch, 35.0);
+                self.decoy_positions.push((x, y));
+                self.adversary.replays += 1;
+            }
+        }
+
+        // ---- 淹没：高频随机噪声，铺满全场 ----
+        if self.config.flood_marks > 0 {
+            for _ in 0..self.config.flood_marks {
+                let x = self.rng.gen::<f64>() * size;
+                let y = self.rng.gen::<f64>() * size;
+                let ch = self.rng.gen_range(0..n_ch);
+                if !self.channel_usable(ch) {
+                    continue;
+                }
+                self.field.deposit(x, y, ch, 20.0);
+                self.adversary.floods += 1;
+            }
+        }
     }
 
     /// 推进一个 tick
@@ -573,6 +660,8 @@ impl Swarm {
 
                 if self.targets[t].health <= 0.0 {
                     self.targets[t].destroyed = true;
+                    // 记录位置，供重放攻击使用
+                    self.dead_target_positions.push((self.targets[t].x, self.targets[t].y));
                     self.drones[d].target = None;
                     self.drones[d].state = DroneState::Searching;
                 }
@@ -772,6 +861,120 @@ mod tests {
         assert!(
             (c20 - c40).abs() < 0.05,
             "should saturate at 20 channels: 20ch={c20:.2} 40ch={c40:.2}"
+        );
+    }
+
+    #[test]
+    fn injection_attack_reduces_coverage() {
+        let run = |decoy: bool| {
+            let mut s = Swarm::new(SwarmConfig {
+                command_post_until: Some(0),
+                n_drones: 40,
+                n_targets: 20,
+                n_channels: 20,
+                field_size: 200.0,
+                sense_radius: 8.0,
+                decoy_rate: if decoy { 1.0 } else { 0.0 },
+                decoys_per_tick: if decoy { 4 } else { 0 },
+                seed: 0,
+                ..Default::default()
+            });
+            for _ in 0..1200 {
+                s.step();
+            }
+            s.coverage()
+        };
+        let clean = run(false);
+        let attacked = run(true);
+        assert!(
+            attacked < clean - 0.1,
+            "injection should hurt: clean={clean:.2} attacked={attacked:.2}"
+        );
+    }
+
+    #[test]
+    fn auth_defense_blocks_injection() {
+        let run = |auth: f64| {
+            let mut s = Swarm::new(SwarmConfig {
+                command_post_until: Some(0),
+                n_drones: 40,
+                n_targets: 20,
+                n_channels: 20,
+                field_size: 200.0,
+                sense_radius: 8.0,
+                decoy_rate: 1.0,
+                decoys_per_tick: 4,
+                auth_ratio: auth,
+                seed: 0,
+                ..Default::default()
+            });
+            for _ in 0..1200 {
+                s.step();
+            }
+            (s.coverage(), s.adversary.decoys_injected)
+        };
+        let (undefended, injected) = run(0.0);
+        let (defended, blocked) = run(1.0);
+        assert!(injected > 0, "attack should inject marks when undefended");
+        assert_eq!(blocked, 0, "perfect auth should block all injections");
+        assert!(
+            defended > undefended,
+            "auth should restore coverage: {undefended:.2} -> {defended:.2}"
+        );
+    }
+
+    #[test]
+    fn flooding_attack_reduces_coverage() {
+        let run = |flood: usize| {
+            let mut s = Swarm::new(SwarmConfig {
+                command_post_until: Some(0),
+                n_drones: 40,
+                n_targets: 20,
+                n_channels: 20,
+                field_size: 200.0,
+                sense_radius: 8.0,
+                flood_marks: flood,
+                seed: 0,
+                ..Default::default()
+            });
+            for _ in 0..1200 {
+                s.step();
+            }
+            s.coverage()
+        };
+        let clean = run(0);
+        let flooded = run(8);
+        assert!(
+            flooded < clean - 0.15,
+            "flooding should hurt: clean={clean:.2} flooded={flooded:.2}"
+        );
+    }
+
+    #[test]
+    fn fast_decay_hurts_when_no_attack() {
+        // 快速衰减作为防御手段，在无攻击时也是有害的
+        let run = |decay: f64| {
+            let mut s = Swarm::new(SwarmConfig {
+                command_post_until: Some(0),
+                n_drones: 40,
+                n_targets: 20,
+                n_channels: 20,
+                field_size: 200.0,
+                sense_radius: 8.0,
+                mark_decay: Some(decay),
+                seed: 0,
+                ..Default::default()
+            });
+            for _ in 0..1200 {
+                s.step();
+            }
+            s.coverage()
+        };
+        let normal = run(0.998);
+        let fast = run(0.95);
+        assert!(
+            fast < normal,
+            "fast decay should hurt real marks: normal={normal:.2} fast={fast:.2}"
         );
     }
 
